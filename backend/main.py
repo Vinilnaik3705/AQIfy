@@ -130,7 +130,7 @@ async def get_state(city: str = Query(default="all")):
                 place_label = city_name
             
             combined_wards.append({
-                "id": f"{city_key}_{city_key}",
+                "id": city_key,
                 "city_key": city_key,
                 "name": place_label,
                 "state": city_data.get("state", ""),
@@ -146,7 +146,7 @@ async def get_state(city: str = Query(default="all")):
             
             combined_sensors.append({
                 **r,
-                "ward_id": f"{city_key}_{city_key}",
+                "ward_id": city_key,
                 "city_key": city_key,
                 "sensor_id": place_label
             })
@@ -379,7 +379,11 @@ async def run_advisory(
     # Standard city ward
     resolved_city = city
     resolved_ward_id = ward_id
-    if "_" in ward_id:
+    # First check if the full ward_id is a direct CITIES key (e.g. "delhi_connaught")
+    if ward_id in CITIES:
+        resolved_city = ward_id
+        resolved_ward_id = ward_id
+    elif "_" in ward_id:
         parts = ward_id.split("_")
         if parts[0] in CITIES:
             resolved_city = parts[0]
