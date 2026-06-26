@@ -1065,12 +1065,20 @@ function ForecastView({ state, forecast, hours, onChangeHours, selectedWard, onS
   const chartLabels = [];
   const baselineDataset = [];
   const mitigatedDataset = [];
+  const openMeteoDataset = [];
+  const persistenceDataset = [];
+  const confidenceLowDataset = [];
+  const confidenceHighDataset = [];
 
   // +0h
   chartLabels.push('+0h');
   const base0 = currentWard ? Math.round(aqiStandard === 'IN' ? (currentWard.aqi_in ?? currentWard.current_aqi) : (currentWard.aqi_us ?? currentWard.current_aqi)) : 0;
   baselineDataset.push(base0);
   mitigatedDataset.push(base0);
+  openMeteoDataset.push(base0);
+  persistenceDataset.push(base0);
+  confidenceLowDataset.push(base0);
+  confidenceHighDataset.push(base0);
 
   // +1h to +72h
   if (forecast) {
@@ -1080,6 +1088,12 @@ function ForecastView({ state, forecast, hours, onChangeHours, selectedWard, onS
       const baseVal = wForecast ? Math.round(wForecast.predicted_aqi) : 0;
       baselineDataset.push(baseVal);
       mitigatedDataset.push(getMitigatedVal(baseVal, f.hour_offset));
+
+      // Extract new ML comparisons
+      openMeteoDataset.push(wForecast && wForecast.open_meteo_raw !== undefined ? Math.round(wForecast.open_meteo_raw) : baseVal);
+      persistenceDataset.push(wForecast && wForecast.persistence_baseline !== undefined ? Math.round(wForecast.persistence_baseline) : base0);
+      confidenceLowDataset.push(wForecast && wForecast.confidence_low !== undefined ? Math.round(wForecast.confidence_low) : baseVal);
+      confidenceHighDataset.push(wForecast && wForecast.confidence_high !== undefined ? Math.round(wForecast.confidence_high) : baseVal);
     });
   }
 
@@ -1092,6 +1106,13 @@ function ForecastView({ state, forecast, hours, onChangeHours, selectedWard, onS
   const mitigatedPointHoverRadii = mitigatedDataset.map((_, idx) => idx === selectedOffset ? activePointHoverRadius : 0);
 
   const snapshot = forecast ? forecast[Math.min(hours - 1, forecast.length - 1)] : null;
+
+  // Extract ML metadata
+  const firstEntry = forecast?.[0];
+  const firstWForecast = firstEntry?.wards?.find(w => w.ward_id === currentWard?.id) || firstEntry?.wards?.[0];
+  const accuracy = firstWForecast?.accuracy;
+  const anomalies = firstWForecast?.anomalies || [];
+  const modelType = firstWForecast?.model_type || "default";
 
   return (
     <>
@@ -1134,12 +1155,11 @@ function ForecastView({ state, forecast, hours, onChangeHours, selectedWard, onS
         </div>
 
         <div className="right-panel wide-forecast-panel">
-          <div className="card" style={{ padding: '20px', background: '#0c1220', borderRadius: '16px', border: '1px solid rgba(255,255,255,0.05)', marginBottom: 0, height: '100%', display: 'flex', flexDirection: 'column' }}>
+          <div className="card" style={{ padding: '20px', background: '#0c1220', borderRadius: '16px', border: '1px solid rgba(255,255,255,0.05)', marginBottom: 0, height: '100%', display: 'flex', flexDirection: 'column', overflowY: 'auto' }}>
             
             {/* Card Header */}
             <div className="forecast-card-header">
               <div className="forecast-card-title">
-                {/* Inline Calendar Icon */}
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ marginRight: '8px', color: '#38bdf8' }}>
                   <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
                   <line x1="16" y1="2" x2="16" y2="6" />
@@ -1148,14 +1168,22 @@ function ForecastView({ state, forecast, hours, onChangeHours, selectedWard, onS
                 </svg>
                 Hyperlocal AQI Trend & Forecasting (72h)
               </div>
-              <div className="forecast-legend">
+              <div className="forecast-legend" style={{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
                 <div className="legend-dot-item">
                   <div className="dot" style={{ background: '#ef4444' }} />
-                  <span>Baseline Forecast</span>
+                  <span style={{ fontSize: '11px' }}>ML Forecast</span>
                 </div>
                 <div className="legend-dot-item">
                   <div className="dot" style={{ background: '#10b981' }} />
-                  <span>Mitigated Forecast</span>
+                  <span style={{ fontSize: '11px' }}>Mitigated</span>
+                </div>
+                <div className="legend-dot-item">
+                  <div className="dot" style={{ background: '#f97316', borderRadius: '0', height: '2px', width: '8px' }} />
+                  <span style={{ fontSize: '11px' }}>Open-Meteo</span>
+                </div>
+                <div className="legend-dot-item">
+                  <div className="dot" style={{ background: '#64748b', borderRadius: '0', height: '1px', width: '8px' }} />
+                  <span style={{ fontSize: '11px' }}>Persistence</span>
                 </div>
               </div>
             </div>
@@ -1163,7 +1191,28 @@ function ForecastView({ state, forecast, hours, onChangeHours, selectedWard, onS
             {/* Ward Name Display */}
             <div style={{ fontSize: '13px', color: '#94a3b8', marginBottom: '14px', display: 'flex', alignItems: 'center', gap: '6px' }}>
               <span>📍</span> <span>Selected: <strong>{currentWard?.name || 'All'}</strong></span>
+              {modelType !== "default" && (
+                <span style={{ marginLeft: 'auto', fontSize: '11px', background: 'rgba(56, 189, 248, 0.1)', color: '#38bdf8', padding: '1px 6px', borderRadius: '4px' }}>
+                  Model Active: {modelType}
+                </span>
+              )}
             </div>
+
+            {/* Anomaly Banners */}
+            {anomalies && anomalies.map((anomaly, idx) => (
+              <div key={idx} style={{ background: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.3)', borderRadius: '12px', padding: '12px', marginBottom: '14px', display: 'flex', gap: '10px', alignItems: 'flex-start' }}>
+                <span style={{ fontSize: '18px' }}>⚠️</span>
+                <div>
+                  <div style={{ fontWeight: '600', color: '#fca5a5', fontSize: '13px' }}>Unexpected AQI Spike Detected!</div>
+                  <div style={{ color: '#fca5a5', fontSize: '12px', marginTop: '2px' }}>
+                    Actual AQI is <strong>{anomaly.actual}</strong> (predicted <strong>{anomaly.predicted}</strong>, deviation of <strong>+{anomaly.deviation}</strong>).
+                  </div>
+                  <div style={{ color: '#cbd5e1', fontSize: '11px', marginTop: '4px' }}>
+                    Possible Cause: {anomaly.possible_cause}
+                  </div>
+                </div>
+              </div>
+            ))}
 
             {/* Metrics Inset Box */}
             <div className="forecast-metrics-grid">
@@ -1204,6 +1253,28 @@ function ForecastView({ state, forecast, hours, onChangeHours, selectedWard, onS
                   labels: chartLabels,
                   datasets: [
                     {
+                      label: 'Confidence Upper',
+                      data: confidenceHighDataset,
+                      borderColor: 'rgba(239, 68, 68, 0.12)',
+                      borderDash: [3, 3],
+                      backgroundColor: 'transparent',
+                      borderWidth: 1,
+                      tension: 0.4,
+                      pointRadius: 0,
+                      fill: false,
+                    },
+                    {
+                      label: 'Confidence Lower',
+                      data: confidenceLowDataset,
+                      borderColor: 'rgba(239, 68, 68, 0.12)',
+                      borderDash: [3, 3],
+                      backgroundColor: 'rgba(239, 68, 68, 0.02)',
+                      borderWidth: 1,
+                      tension: 0.4,
+                      pointRadius: 0,
+                      fill: '-1',
+                    },
+                    {
                       label: 'Baseline Forecast',
                       data: baselineDataset,
                       borderColor: '#ef4444',
@@ -1230,6 +1301,28 @@ function ForecastView({ state, forecast, hours, onChangeHours, selectedWard, onS
                       pointBorderColor: '#ffffff',
                       pointBorderWidth: 2,
                       fill: true,
+                    },
+                    {
+                      label: 'Open-Meteo Raw',
+                      data: openMeteoDataset,
+                      borderColor: '#f97316',
+                      borderDash: [6, 4],
+                      backgroundColor: 'transparent',
+                      borderWidth: 1.5,
+                      tension: 0.4,
+                      pointRadius: 0,
+                      fill: false,
+                    },
+                    {
+                      label: 'Persistence Baseline',
+                      data: persistenceDataset,
+                      borderColor: '#64748b',
+                      borderDash: [2, 4],
+                      backgroundColor: 'transparent',
+                      borderWidth: 1.5,
+                      tension: 0.4,
+                      pointRadius: 0,
+                      fill: false,
                     }
                   ]
                 }}
@@ -1254,7 +1347,6 @@ function ForecastView({ state, forecast, hours, onChangeHours, selectedWard, onS
                       ticks: {
                         color: '#64748b',
                         font: { size: 10 },
-                        // Show label only every 12 hours to avoid overcrowding
                         callback: function(val, index) {
                           return index % 12 === 0 ? `+${index}h` : '';
                         },
@@ -1278,7 +1370,7 @@ function ForecastView({ state, forecast, hours, onChangeHours, selectedWard, onS
             </div>
 
             {/* Timeline Scrubber Slider */}
-            <div style={{ marginTop: 'auto', borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: '14px' }}>
+            <div style={{ marginTop: 'auto', borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: '14px', paddingBottom: '14px' }}>
               <div className="scrubber-header">
                 <span className="scrubber-label">Timeline Scrubber</span>
                 <span className="scrubber-action-label">Deploy/Simulate at selected interval</span>
@@ -1293,12 +1385,51 @@ function ForecastView({ state, forecast, hours, onChangeHours, selectedWard, onS
               />
             </div>
 
+            {/* ML Performance Evaluation Card */}
+            {accuracy && accuracy.training_samples > 0 && (
+              <div style={{ padding: '12px', background: '#080d1a', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.03)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                  <span style={{ fontSize: '11px', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: '600' }}>ML Forecast Performance (Holdout Evaluation)</span>
+                  <span style={{ fontSize: '11px', background: 'rgba(16, 185, 129, 0.1)', color: '#10b981', padding: '1px 5px', borderRadius: '4px', fontWeight: '500' }}>
+                    Model: Gradient Boosting
+                  </span>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '8px', textAlign: 'center' }}>
+                  <div style={{ background: 'rgba(255,255,255,0.02)', padding: '6px', borderRadius: '6px' }}>
+                    <div style={{ fontSize: '10px', color: '#64748b' }}>ML RMSE</div>
+                    <div style={{ fontSize: '12px', fontWeight: '600', color: '#ef4444', marginTop: '2px' }}>{accuracy.ml_rmse}</div>
+                  </div>
+                  <div style={{ background: 'rgba(255,255,255,0.02)', padding: '6px', borderRadius: '6px' }}>
+                    <div style={{ fontSize: '10px', color: '#64748b' }}>Open-Meteo</div>
+                    <div style={{ fontSize: '12px', fontWeight: '600', color: '#f97316', marginTop: '2px' }}>{accuracy.open_meteo_rmse}</div>
+                  </div>
+                  <div style={{ background: 'rgba(255,255,255,0.02)', padding: '6px', borderRadius: '6px' }}>
+                    <div style={{ fontSize: '10px', color: '#64748b' }}>Persistence</div>
+                    <div style={{ fontSize: '12px', fontWeight: '600', color: '#94a3b8', marginTop: '2px' }}>{accuracy.persistence_rmse}</div>
+                  </div>
+                  <div style={{ background: 'rgba(16, 185, 129, 0.05)', padding: '6px', borderRadius: '6px' }}>
+                    <div style={{ fontSize: '10px', color: '#10b981' }}>Skill Score</div>
+                    <div style={{ fontSize: '12px', fontWeight: '700', color: '#10b981', marginTop: '2px' }}>
+                      {accuracy.skill_score >= 0 ? `+${(accuracy.skill_score * 100).toFixed(0)}%` : `${(accuracy.skill_score * 100).toFixed(0)}%`}
+                    </div>
+                  </div>
+                </div>
+                <div style={{ fontSize: '10px', color: '#64748b', marginTop: '8px', textAlign: 'center' }}>
+                  {accuracy.skill_score > 0 ? (
+                    <span>✅ ML Forecast beats uncalibrated persistence by <strong>{(accuracy.skill_score * 100).toFixed(0)}%</strong> (trained on {accuracy.training_samples} samples)</span>
+                  ) : (
+                    <span>Persistence baseline is highly persistent (stable weather)</span>
+                  )}
+                </div>
+              </div>
+            )}
+
           </div>
         </div>
       </div>
-    </>
   );
 }
+
 
 /* ── Attribution View ──────────────────────────────────────────────────── */
 

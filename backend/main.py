@@ -26,6 +26,7 @@ from agents import (
     EnforcementAgent,
     AdvisoryAgent,
 )
+from forecaster import AQIForecaster
 
 # ── Application Setup ─────────────────────────────────────────────────────────
 
@@ -50,6 +51,21 @@ attribution_agent = AttributionAgent()
 predictive_agent = PredictiveAgent()
 enforcement_agent = EnforcementAgent()
 advisory_agent = AdvisoryAgent()
+forecaster = AQIForecaster()
+
+@app.on_event("startup")
+async def startup_event():
+    # Pre-train top cities in the background to avoid blocking server start
+    TOP_CITIES = ["delhi", "mumbai", "kolkata", "bengaluru", "chennai", "hyderabad", "pune", "ahmedabad", "jaipur", "lucknow"]
+    async def train_all():
+        for city in TOP_CITIES:
+            try:
+                await forecaster.train_for_city(city)
+            except Exception as e:
+                import logging
+                logging.getLogger("main").error(f"Error training startup model for {city}: {e}")
+    asyncio.create_task(train_all())
+
 
 
 # ── Helper ────────────────────────────────────────────────────────────────────
@@ -169,8 +185,78 @@ async def get_forecast(
     city: str = Query(default=DEFAULT_CITY),
     hours: int = Query(default=24, ge=1, le=72),
 ):
-    """Return ward-level AQI forecast grid using real Open-Meteo forecast data."""
-    return await sim.generate_forecast(city, hours)
+    """Return ward-level AQI forecast grid using real Open-Meteo forecast data with ML predictions."""
+    # 1. Fetch raw forecast grid for all cities
+    raw_forecast = await sim.generate_forecast(city, hours)
+    
+    # 2. Get list of cities to override
+    TOP_CITIES = ["delhi", "mumbai", "kolkata", "bengaluru", "chennai", "hyderabad", "pune", "ahmedabad", "jaipur", "lucknow"]
+    cities_to_process = [city] if city != "all" else TOP_CITIES
+    
+    # Filter cities to process that are in CITIES keys
+    cities_to_process = [c for c in cities_to_process if c in CITIES]
+    
+    if not cities_to_process:
+        return raw_forecast
+        
+    # Generate ML forecasts in parallel
+    ml_forecasts = {}
+    tasks = {c: forecaster.generate_ml_forecast(c, hours) for c in cities_to_process}
+    results = await asyncio.gather(*tasks.values(), return_exceptions=True)
+    
+    for c, res in zip(tasks.keys(), results):
+        if isinstance(res, Exception):
+            import logging
+            logging.getLogger("main").error(f"Error generating ML forecast for {c}: {res}")
+            continue
+        ml_forecasts[c] = res
+
+    # Fetch current readings to detect if there is any anomaly right now
+    try:
+        current_readings = await sim.generate_readings("all")
+        current_readings_map = {r["ward_id"]: r.get("aqi_in", r["aqi"]) for r in current_readings}
+    except Exception as e:
+        current_readings_map = {}
+        
+    # Run anomaly detection for each city
+    for w_id, ml_f in ml_forecasts.items():
+        actual_now = current_readings_map.get(w_id)
+        if actual_now is not None and ml_f["grid"]:
+            predicted_now = ml_f["grid"][0]["predicted_aqi"]
+            res_std = ml_f["accuracy"]["residual_std"]
+            anomaly = forecaster.detect_anomaly(predicted_now, actual_now, res_std)
+            if anomaly:
+                ml_f["anomalies"].append(anomaly)
+        
+    # Merge ML forecasts into the raw forecast structure
+    # raw_forecast is a list of hourly entries: [{"timestamp": ..., "hour_offset": ..., "wards": [...]}, ...]
+    for entry in raw_forecast:
+        h_offset = entry["hour_offset"]
+        h_idx = h_offset - 1
+        
+        for w in entry.get("wards", []):
+            w_id = w["ward_id"]
+            if w_id in ml_forecasts:
+                ml_f = ml_forecasts[w_id]
+                grid_len = len(ml_f["grid"])
+                if h_idx < grid_len:
+                    ml_hour_data = ml_f["grid"][h_idx]
+                    
+                    # Update ward fields with ML data
+                    w["predicted_aqi"] = ml_hour_data["predicted_aqi"]
+                    w["confidence"] = ml_hour_data["confidence"]
+                    w["confidence_low"] = ml_hour_data["confidence_low"]
+                    w["confidence_high"] = ml_hour_data["confidence_high"]
+                    w["open_meteo_raw"] = ml_hour_data["open_meteo_raw"]
+                    w["persistence_baseline"] = ml_hour_data["persistence_baseline"]
+                    
+                    # Attach metrics and anomalies (attached to the ward object so it is visible to front-end for that city)
+                    w["accuracy"] = ml_f["accuracy"]
+                    w["anomalies"] = ml_f["anomalies"]
+                    w["model_type"] = ml_f["model_type"]
+
+    return raw_forecast
+
 
 
 @app.post("/api/agents/attribution")
