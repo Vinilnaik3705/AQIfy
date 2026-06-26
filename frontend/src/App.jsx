@@ -282,7 +282,7 @@ export default function App() {
       setSelectedWard(null)
       return
     }
-    // Set basic info first so the UI responds instantly, showing a loading indicator for weather
+    // Set basic info first so the UI responds instantly
     setSelectedWard({
       ...ward,
       weather: { temperature_c: null, wind_speed_kmh: null, loading: true }
@@ -290,7 +290,15 @@ export default function App() {
     
     const data = await fetchJSON(`/api/aqi-details?lat=${ward.center[0]}&lng=${ward.center[1]}&name=${encodeURIComponent(ward.name)}&country=${encodeURIComponent(ward.country || '')}&state=${encodeURIComponent(ward.state || '')}`)
     if (data) {
-      setSelectedWard(data)
+      // Preserve the original ward id (e.g. "hyderabad_lb_nagar") so forecast
+      // lookups can still match ward_id in the forecast wards array.
+      // The /api/aqi-details endpoint returns a custom "custom_lat_lng" id which
+      // would break the forecast ward matching.
+      setSelectedWard({
+        ...data,
+        id: ward.id,           // keep original ward key for forecast lookup
+        ward_key: ward.id,     // explicit alias used by ForecastView
+      })
     }
   }, [])
 
@@ -1023,6 +1031,9 @@ function ForecastView({ state, forecast, hours, onChangeHours, selectedWard, onS
 
   // Safe default selectedWard if null
   const currentWard = selectedWard || state.wards[0];
+  // Use ward_key if present (set by handleSelectWard to preserve the original ward id
+  // after /api/aqi-details overwrites it with a "custom_lat_lng" id).
+  const forecastWardId = currentWard?.ward_key ?? currentWard?.id;
 
   // Calculate simulated mitigation value
   const getMitigatedVal = (baseVal, offset) => {
@@ -1056,7 +1067,7 @@ function ForecastView({ state, forecast, hours, onChangeHours, selectedWard, onS
     const entry = forecast[entryIndex];
     // Only use the ward that exactly matches the selected city — never fall back to [0]
     // (that would show Delhi/first-city data for every city and make all graphs identical)
-    const wForecast = entry?.wards?.find(w => w.ward_id === currentWard?.id) ?? null;
+    const wForecast = entry?.wards?.find(w => w.ward_id === forecastWardId) ?? null;
     
     baselineAqi = wForecast ? Math.round(aqiStandard === 'US' ? (wForecast.predicted_aqi_us ?? wForecast.predicted_aqi) : wForecast.predicted_aqi) : 0;
     mitigatedAqi = getMitigatedVal(baselineAqi, selectedOffset);
@@ -1094,8 +1105,8 @@ function ForecastView({ state, forecast, hours, onChangeHours, selectedWard, onS
   if (forecast) {
     forecast.forEach((f, idx) => {
       chartLabels.push(`+${f.hour_offset}h`);
-      // Strict ward match — never fall back to [0] which would show the wrong city's data
-      const wForecast = f.wards?.find(w => w.ward_id === currentWard?.id) ?? null;
+      // Strict ward match using forecastWardId — preserves original ward key
+      const wForecast = f.wards?.find(w => w.ward_id === forecastWardId) ?? null;
       const baseVal = wForecast ? Math.round(aqiStandard === 'US' ? (wForecast.predicted_aqi_us ?? wForecast.predicted_aqi) : wForecast.predicted_aqi) : 0;
       baselineDataset.push(baseVal);
       mitigatedDataset.push(getMitigatedVal(baseVal, f.hour_offset));
@@ -1120,7 +1131,7 @@ function ForecastView({ state, forecast, hours, onChangeHours, selectedWard, onS
 
   // Extract ML metadata — strict ward match only
   const firstEntry = forecast?.[0];
-  const firstWForecast = firstEntry?.wards?.find(w => w.ward_id === currentWard?.id) ?? null;
+  const firstWForecast = firstEntry?.wards?.find(w => w.ward_id === forecastWardId) ?? null;
   const accuracy = firstWForecast?.accuracy;
   const anomalies = firstWForecast?.anomalies || [];
   const modelType = firstWForecast?.model_type || "default";
