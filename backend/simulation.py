@@ -187,24 +187,8 @@ def is_in_india(lat: float, lng: float) -> bool:
 
 
 def get_indian_seasonal_calibration(lat: float, lng: float) -> float:
-    """Seasonal adjustment factor for Indian cities to correct global CAMS/model biases.
-    Wet deposition during monsoon dramatically reduces PM2.5/PM10, while winter inversions inflate it.
-    """
-    if not is_in_india(lat, lng):
-        return 1.0
-    current_month = datetime.now().month
-    # Monsoon season: June, July, August, September
-    if current_month in [6, 7, 8, 9]:
-        return 0.30  # Significant washout due to rain / monsoon winds (calibrated for real ground AQIs ~50)
-    # Transition: October
-    elif current_month == 10:
-        return 0.65
-    # Winter peak: November, December, January, February
-    elif current_month in [11, 12, 1, 2]:
-        return 1.10  # Stagnant boundary layer and stubble/biomass burning
-    # Pre-monsoon/Summer: March, April, May
-    else:
-        return 0.75  # Dust storms but higher wind mixing
+    """Return 1.0 to preserve authentic, live real-time CAMS AQI readings directly from Open-Meteo."""
+    return 1.0
 
 
 LIVE_CITIES = {
