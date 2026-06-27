@@ -1970,6 +1970,70 @@ function EnforcementView({ dispatches, onRefresh, onViewEvidence }) {
 
 /* ── Citizens Advisory Popup ───────────────────────────────────────────── */
 
+const speakTemplates = {
+  en: (ward, aqi, level, advisory, precautions) => 
+    `${ward} Health Advisory. The AQI is ${aqi}, which is ${level}. Advisory: ${advisory}. Recommended precautions: ${precautions.join('. ')}`,
+  hi: (ward, aqi, level, advisory, precautions) => 
+    `${ward} स्वास्थ्य परामर्श। वायु गुणवत्ता सूचकांक ${aqi} है, जो कि ${level} है। परामर्श: ${advisory}। अनुशंसित सावधानियां: ${precautions.join('। ')}`,
+  kn: (ward, aqi, level, advisory, precautions) => 
+    `${ward} ಆರೋಗ್ಯ ಸಲಹೆ. ವಾಯು ಗುಣಮಟ್ಟ ಸೂಚ್ಯಂಕ ${aqi} ಆಗಿದೆ, ಇದು ${level} ಆಗಿದೆ. ಸಲಹೆ: ${advisory}. ಮುನ್ನೆಚ್ಚರಿಕೆಗಳು: ${precautions.join('. ')}`,
+  ta: (ward, aqi, level, advisory, precautions) => 
+    `${ward} சுகாதார ஆலோசனை. காற்றின் தரக் குறியீடு ${aqi} ஆகும், இது ${level} நிலையில் உள்ளது. ஆலோசனை: ${advisory}. பரிந்துரைக்கப்பட்ட முன்னெச்சரிக்கைகள்: ${precautions.join('. ')}`,
+  te: (ward, aqi, level, advisory, precautions) => 
+    `${ward} ఆరోగ్య సలహా పత్రం. వాయు నాణ్యత సూచీ ${aqi} గా ఉంది, ఇది ${level} స్థాయి. సలహా: ${advisory}. తీసుకోవాల్సిన జాగ్రత్తలు: ${precautions.join('. ')}`
+};
+
+const levelTranslations = {
+  en: { good: "Good", satisfactory: "Satisfactory", moderate: "Moderate", poor: "Poor", very_poor: "Very Poor", severe: "Severe" },
+  hi: { good: "अच्छा", satisfactory: "संतोषजनक", moderate: "मध्यम", poor: "खराब", very_poor: "बहुत खराब", severe: "गंभीर" },
+  kn: { good: "ಉತ್ತಮ", satisfactory: "ತೃಪ್ತಿಕರ", moderate: "ಮಧ್ಯಮ", poor: "ಕಳಪೆ", very_poor: "ತುಂಬಾ ಕಳಪೆ", severe: "ತೀವ್ರ" },
+  ta: { good: "நல்லது", satisfactory: "திருப்திகரமானது", moderate: "மிதமானது", poor: "மோசமானது", very_poor: "மிகவும் மோசமானது", severe: "கடுமையானது" },
+  te: { good: "మంచిది", satisfactory: "సంతృప్తికరం", moderate: "సాధారణం", poor: "క్షీణించింది", very_poor: "చాలా దారుణంగా ఉంది", severe: "అత్యంత ప్రమాదకరం" }
+};
+
+const precautionTranslations = {
+  en: {
+    "Wear N95 mask outdoors": "Wear N95 mask outdoors",
+    "Keep windows and doors closed": "Keep windows and doors closed",
+    "Avoid all outdoor activities": "Avoid all outdoor activities",
+    "Use air purifier if available": "Use air purifier if available",
+    "Seek medical attention if breathing difficulty occurs": "Seek medical attention if breathing difficulty occurs",
+    "EMERGENCY: Consider temporary relocation from affected area": "EMERGENCY: Consider temporary relocation from affected area"
+  },
+  hi: {
+    "Wear N95 mask outdoors": "बाहर जाने पर N95 मास्क पहनें",
+    "Keep windows and doors closed": "खिड़कियां और दरवाजे बंद रखें",
+    "Avoid all outdoor activities": "सभी बाहरी गतिविधियों से बचें",
+    "Use air purifier if available": "यदि उपलब्ध हो तो एयर प्यूरीफायर का उपयोग करें",
+    "Seek medical attention if breathing difficulty occurs": "सांस लेने में तकलीफ होने पर तुरंत डॉक्टर से संपर्क करें",
+    "EMERGENCY: Consider temporary relocation from affected area": "आपातकाल: प्रभावित क्षेत्र से अस्थाई रूप से दूसरी जगह जाने पर विचार करें"
+  },
+  kn: {
+    "Wear N95 mask outdoors": "ಹೊರಗೆ ಹೋಗುವಾಗ N95 ಮಾಸ್ಕ್ ಧರಿಸಿ",
+    "Keep windows and doors closed": "ಕಿಟಕಿ ಮತ್ತು ಬಾಗಿಲುಗಳನ್ನು ಮುಚ್ಚಿಡಿ",
+    "Avoid all outdoor activities": "ಎಲ್ಲಾ ಹೊರಾಂಗಣ ಚಟುವటಿಕೆಗಳನ್ನು ತಪ್ಪಿಸಿ",
+    "Use air purifier if available": "ಲಭ್ಯವಿದ್ದರೆ ಏರ್ ಪ್ಯೂರಿಫೈಯರ್ ಬಳಸಿ",
+    "Seek medical attention if breathing difficulty occurs": "ಉಸಿರಾಟದ ತೊಂದರೆ ಉಂಟಾದರೆ ವೈದ್ಯಕೀಯ ಚಿಕಿತ್ಸೆ ಪಡೆಯಿರಿ",
+    "EMERGENCY: Consider temporary relocation from affected area": "ತುರ್ತು ಪರಿಸ್ಥితి: ತಾತ್ಕಾಲಿಕವಾಗಿ ಬೇರೆಡೆಗೆ ಸ್ಥಳಾಂತರಗೊಳ್ಳುವುದನ್ನು ಪರಿಗಣಿಸಿ"
+  },
+  ta: {
+    "Wear N95 mask outdoors": "வெளியே செல்லும் போது N95 முகக்கவசம் அணியுங்கள்",
+    "Keep windows and doors closed": "ஜன்னல்கள் மற்றும் கதவுகளை மூடி வைக்கவும்",
+    "Avoid all outdoor activities": "வெளிப்புற நடவடிக்கைகள் அனைத்தையும் தவிர்க்கவும்",
+    "Use air purifier if available": "வசதி இருந்தால் காற்று சுத்திகரிப்பானை பயன்படுத்தவும்",
+    "Seek medical attention if breathing difficulty occurs": "மூச்சுத்திணறல் ஏற்பட்டால் மருத்துவ உதவியை நாடுங்கள்",
+    "EMERGENCY: Consider temporary relocation from affected area": "அவசரநிலை: தற்காலிகமாக வேறு இடத்திற்கு மாறுவதை பரிசீலிக்கவும்"
+  },
+  te: {
+    "Wear N95 mask outdoors": "బయటకు వెళ్ళినప్పుడు N95 మాస్క్ ధరించండి",
+    "Keep windows and doors closed": "కిటికీలు మరియు తలుపులు మూసి ఉంచండి",
+    "Avoid all outdoor activities": "ఆరుబయట తిరగడం పూర్తిగా నివారించండి",
+    "Use air purifier if available": "అందుబాటులో ఉంటే ఎయిర్ ప్యూరిఫైయర్ ఉపయోగించండి",
+    "Seek medical attention if breathing difficulty occurs": "శ్వాస తీసుకోవడంలో ఇబ్బంది ఉంటే వెంటనే వైద్యుడిని సంప్రదించండి",
+    "EMERGENCY: Consider temporary relocation from affected area": "అత్యవసర పరిస్థితి: ప్రభావిత ప్రాంతం నుండి తాత్కాలికంగా వేరే ప్రాంతానికి వెళ్లడం గురించి ఆలోచించండి"
+  }
+};
+
 function getPrecautionEmoji(precautionText) {
   const text = precautionText.toLowerCase();
   if (text.includes('mask')) return '😷';
@@ -2031,7 +2095,18 @@ function CitizensAdvisoryPopup({ state, advisory, lang, onChangeLang, selectedWa
       return
     }
 
-    const textToRead = `${advisory.ward_name} Health Advisory. AQI is ${Math.round(advisory.aqi)}. Level is ${advisory.level.replace('_', ' ')}. Advisory: ${advisory.advisory}. Key Precautions: ${advisory.precautions.join('. ')}`
+    const tLang = lang in speakTemplates ? lang : 'en'
+    const transLevel = levelTranslations[tLang]?.[advisory.level] || advisory.level.replace('_', ' ')
+    const translatedPrecautions = advisory.precautions.map(p => precautionTranslations[tLang]?.[p] || p)
+    
+    const textToRead = speakTemplates[tLang](
+      advisory.ward_name,
+      Math.round(advisory.aqi),
+      transLevel,
+      advisory.advisory,
+      translatedPrecautions
+    )
+
     const utterance = new SpeechSynthesisUtterance(textToRead)
     
     if (lang === 'hi') utterance.lang = 'hi-IN'
@@ -2187,12 +2262,15 @@ function CitizensAdvisoryPopup({ state, advisory, lang, onChangeLang, selectedWa
                 <div style={{ marginTop: 12 }}>
                   <div className="card-title" style={{ fontSize: 11, marginBottom: 6 }}>Precautions</div>
                   <ul className="precaution-list" style={{ fontSize: 13, gap: 6, display: 'flex', flexDirection: 'column' }}>
-                    {advisory.precautions.map((p, i) => (
-                      <li key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, background: 'rgba(255,255,255,0.02)', padding: '6px 8px', borderRadius: '6px' }}>
-                        <span style={{ fontSize: '18px', lineHeight: 1 }}>{getPrecautionEmoji(p)}</span>
-                        <span>{p}</span>
-                      </li>
-                    ))}
+                    {advisory.precautions.map((p, i) => {
+                      const translatedP = precautionTranslations[lang]?.[p] || p;
+                      return (
+                        <li key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, background: 'rgba(255,255,255,0.02)', padding: '6px 8px', borderRadius: '6px' }}>
+                          <span style={{ fontSize: '18px', lineHeight: 1 }}>{getPrecautionEmoji(p)}</span>
+                          <span>{translatedP}</span>
+                        </li>
+                      );
+                    })}
                   </ul>
                 </div>
               )}
