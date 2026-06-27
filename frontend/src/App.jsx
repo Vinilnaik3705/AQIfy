@@ -292,41 +292,6 @@ export default function App() {
     : 0
   const alertCount = dispatches ? dispatches.total_hotspots : 0
 
-  const isRankingView = typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('view') === 'ranking';
-
-  if (isRankingView && state) {
-    return (
-      <div className="app-shell">
-        <Header
-          tab={tab}
-          setTab={setTab}
-          cityAqi={cityAqi}
-          alertCount={alertCount}
-          weather={state?.weather}
-          onSelectPlace={handleSelectPlace}
-        />
-        <div className="main-content" style={{ display: 'flex', flexDirection: 'column', flex: 1, padding: '24px 48px' }}>
-          <div className="title-section">
-            <h1 className="main-title">Live Air Quality Map</h1>
-            <p className="subtitle">Real-time air quality ranking of major Indian cities.</p>
-          </div>
-          <CommandCenter
-            state={state}
-            selectedWard={selectedWard}
-            onSelectWard={handleSelectWard}
-            mapStyle={mapStyle}
-            setMapStyle={setMapStyle}
-            customPlaces={customPlaces}
-            targetCenter={targetCenter}
-            targetZoom={targetZoom}
-            setTab={setTab}
-            onSelectPlace={handleSelectPlace}
-            forceMaximized={true}
-          />
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div className="app-shell">
@@ -359,6 +324,7 @@ export default function App() {
             targetZoom={targetZoom}
             setTab={setTab}
             onSelectPlace={handleSelectPlace}
+            forceMaximized={true}
           />
         )}
         {tab === 'forecast' && (
@@ -835,7 +801,6 @@ function CommandCenter({ state, selectedWard, onSelectWard, mapStyle, setMapStyl
                   >
                     <div className="rank-left-info">
                       <span className="rank-num">{idx + 1}</span>
-                      <span>{getFlagEmoji(city.country)}</span>
                       <span>{city.name}</span>
                     </div>
                     <div className="rank-badge" style={{ backgroundColor: aqiColor(city.aqi), color: getAqiTextColor(city.aqi) }}>
@@ -844,14 +809,6 @@ function CommandCenter({ state, selectedWard, onSelectWard, mapStyle, setMapStyl
                   </div>
                 ))}
               </div>
-
-              <button 
-                className="btn btn-primary" 
-                style={{ width: '100%', padding: '12px', borderRadius: '8px', fontSize: '13px', fontWeight: '700', backgroundColor: '#3b82f6' }}
-                onClick={() => setTab('forecast')}
-              >
-                See full ranking →
-              </button>
             </>
           ) : (
             /* Normal Left Panel (Search / Highlight Card) */
@@ -1058,30 +1015,6 @@ function CommandCenter({ state, selectedWard, onSelectWard, mapStyle, setMapStyl
             )}
           </MapContainer>
 
-          {/* Floating Maximize/Minimize Toggle button */}
-          <button 
-            className="map-maximize-btn" 
-            onClick={() => {
-              if (forceMaximized) {
-                window.close();
-              } else {
-                window.open('?view=ranking', '_blank');
-              }
-            }}
-            title={forceMaximized ? "Close ranking page" : "Maximize ranking map"}
-          >
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-              {forceMaximized ? (
-                <>
-                  <path d="M4 14h6v6M20 10h-6V4M14 10l7-7M10 14l-7 7" />
-                </>
-              ) : (
-                <>
-                  <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" />
-                </>
-              )}
-            </svg>
-          </button>
 
           {/* Floating Controls Overlay (Right Panel on Map) */}
           <div className="map-right-controls">
