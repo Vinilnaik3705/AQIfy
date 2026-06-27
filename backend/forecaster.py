@@ -419,9 +419,24 @@ class AQIForecaster:
             om_o3 = forecast_raw_aqi["o3"][h] or 0.0
 
 
-            # Calculate AQIs and cap at realistic ceiling
-            predicted_aqi = min(calculate_indian_aqi(pred_pm25_val, pred_pm10_val, om_no2, om_so2, om_co, om_o3), 350.0)
-            open_meteo_raw_aqi = min(calculate_indian_aqi(om_pm25, om_pm10, om_no2, om_so2, om_co, om_o3), 350.0)
+            # Calculate AQIs and cap at realistic ceiling (500.0 for Indian NAQI scale)
+            predicted_aqi = min(calculate_indian_aqi(pred_pm25_val, pred_pm10_val, om_no2, om_so2, om_co, om_o3), 500.0)
+            open_meteo_raw_aqi = min(calculate_indian_aqi(om_pm25, om_pm10, om_no2, om_so2, om_co, om_o3), 500.0)
+
+            # Calculate boundary layer / inversion height diurnal cycle
+            angle = ((hour - 10) / 24) * 2 * np.pi
+            inv_height = 700 - 400 * np.cos(angle)
+
+            # Interventions are more effective in stagnant air (low wind speed) and low boundary layer where pollutants are trapped
+            ws_factor = np.exp(-ws / 5.0)  # low wind = higher localized retention of intervention
+            inv_factor = 1.0 + (500.0 / max(100.0, inv_height))  # lower mixing height = higher local concentration/reduction impact
+            time_factor = 1.0 - np.exp(-(h + 1) / 12.0)
+
+            # Simulated mitigation effect on predicted PM concentrations (up to 20-30% reduction depending on weather conditions)
+            mit_pm25 = max(0.0, pred_pm25_val * (1.0 - (0.15 * ws_factor * inv_factor * time_factor)))
+            mit_pm10 = max(0.0, pred_pm10_val * (1.0 - (0.20 * ws_factor * inv_factor * time_factor)))
+            
+            mitigated_aqi = min(calculate_indian_aqi(mit_pm25, mit_pm10, om_no2, om_so2, om_co, om_o3), 500.0)
             
             confidence_val = max(0.30, 0.95 - (h * 0.007))
             
@@ -433,6 +448,7 @@ class AQIForecaster:
                 "timestamp": dt.isoformat(),
                 "hour_offset": h + 1,
                 "predicted_aqi": round(predicted_aqi, 1),
+                "mitigated_aqi": round(mitigated_aqi, 1),
                 "confidence_low": round(confidence_low, 1),
                 "confidence_high": round(confidence_high, 1),
                 "open_meteo_raw": round(open_meteo_raw_aqi, 1),
@@ -467,6 +483,7 @@ class AQIForecaster:
                 "timestamp": future.isoformat(),
                 "hour_offset": h + 1,
                 "predicted_aqi": round(pred_aqi, 1),
+                "mitigated_aqi": round(max(10.0, pred_aqi * (1.0 - 0.25 * (1.0 - np.exp(-(h + 1) / 12.0)))), 1),
                 "confidence_low": round(max(0.0, pred_aqi - 15.0 - h * 0.3), 1),
                 "confidence_high": round(min(500.0, pred_aqi + 15.0 + h * 0.3), 1),
                 "open_meteo_raw": round(pred_aqi * np.random.uniform(0.9, 1.1), 1),

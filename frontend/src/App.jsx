@@ -1048,7 +1048,7 @@ function ForecastView({ state, forecast, hours, onChangeHours, selectedWard, onS
     const wForecast = entry?.wards?.find(w => w.ward_id === forecastWardId) ?? null;
     
     baselineAqi = wForecast ? Math.round(wForecast.predicted_aqi) : 0;
-    mitigatedAqi = getMitigatedVal(baselineAqi, selectedOffset);
+    mitigatedAqi = wForecast && wForecast.mitigated_aqi !== undefined ? Math.round(wForecast.mitigated_aqi) : getMitigatedVal(baselineAqi, selectedOffset);
     
     const wsKmh = wForecast?.wind_speed_kmh || 12.6;
     windSpeedMs = (wsKmh / 3.6).toFixed(1);
@@ -1087,7 +1087,7 @@ function ForecastView({ state, forecast, hours, onChangeHours, selectedWard, onS
       const wForecast = f.wards?.find(w => w.ward_id === forecastWardId) ?? null;
       const baseVal = wForecast ? Math.round(wForecast.predicted_aqi) : 0;
       baselineDataset.push(baseVal);
-      mitigatedDataset.push(getMitigatedVal(baseVal, f.hour_offset));
+      mitigatedDataset.push(wForecast && wForecast.mitigated_aqi !== undefined ? Math.round(wForecast.mitigated_aqi) : getMitigatedVal(baseVal, f.hour_offset));
 
       // Extract new ML comparisons
       openMeteoDataset.push(wForecast && wForecast.open_meteo_raw !== undefined ? Math.round(wForecast.open_meteo_raw) : baseVal);

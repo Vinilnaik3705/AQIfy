@@ -288,15 +288,18 @@ async def get_forecast(
                 if w_id != lookup_key and ml_hour_data["open_meteo_raw"] > 0:
                     scale = own_open_meteo_raw / ml_hour_data["open_meteo_raw"]
                     scaled_aqi = min(round(ml_hour_data["predicted_aqi"] * scale, 1), 500.0)
+                    scaled_mitigated = min(round(ml_hour_data.get("mitigated_aqi", ml_hour_data["predicted_aqi"]) * scale, 1), 500.0)
                     scaled_low = min(round(ml_hour_data["confidence_low"] * scale, 1), 500.0)
                     scaled_high = min(round(ml_hour_data["confidence_high"] * scale, 1), 500.0)
                 else:
                     scaled_aqi = min(ml_hour_data["predicted_aqi"], 500.0)
+                    scaled_mitigated = min(ml_hour_data.get("mitigated_aqi", ml_hour_data["predicted_aqi"]), 500.0)
                     scaled_low = min(ml_hour_data["confidence_low"], 500.0)
                     scaled_high = min(ml_hour_data["confidence_high"], 500.0)
 
                 # Update ward fields with ML data
                 w["predicted_aqi"] = scaled_aqi
+                w["mitigated_aqi"] = scaled_mitigated
                 w["confidence"] = ml_hour_data["confidence"]
                 w["confidence_low"] = max(0.0, scaled_low)
                 w["confidence_high"] = min(500.0, scaled_high)
