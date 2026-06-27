@@ -1006,6 +1006,12 @@ class SimulationEngine:
         city = self._get_city(city_key)
         readings = await self.generate_readings(city_key)
 
+        rng = random.Random(hash(city_key))
+        population = rng.randint(250000, 1800000) if "_" in city_key else rng.randint(4000000, 15000000)
+        hospitals = rng.randint(2, 12) if "_" in city_key else rng.randint(15, 65)
+        schools = rng.randint(15, 60) if "_" in city_key else rng.randint(80, 320)
+        elderly_pct = rng.randint(7, 16)
+
         ward_summaries = [{
             "id": city_key,
             "name": city["name"],
@@ -1015,8 +1021,8 @@ class SimulationEngine:
             "current_aqi": readings[0]["aqi"],
             "aqi_in": readings[0].get("aqi_in", readings[0]["aqi"]),
             "sensor_count": 1,
-            "population": 10000000,
-            "vulnerable": {"hospitals": 10, "schools": 50, "elderly_pct": 12}
+            "population": population,
+            "vulnerable": {"hospitals": hospitals, "schools": schools, "elderly_pct": elderly_pct}
         }]
 
         weather = await _fetch_live_weather(city["center"][0], city["center"][1])

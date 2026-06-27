@@ -2438,6 +2438,27 @@ function AnalyticsView({ state }) {
         </div>
       </div>
 
+      <div style={{ display: 'flex', gap: '16px', marginBottom: '20px', flexWrap: 'wrap' }}>
+        {[
+          { label: 'Monitored Wards & Cities', value: state.wards.length, color: '#38bdf8', icon: '🏙️' },
+          { label: 'Network AQI Average', value: Math.round(state.sensors.reduce((s, r) => s + (r.aqi_in ?? r.aqi), 0) / state.sensors.length), color: '#34d399', icon: '📊' },
+          { label: 'Peak Regional AQI', value: Math.max(...state.wards.map(w => Math.round(w.current_aqi || 0)), 0), color: '#f87171', icon: '⚠️' },
+          { label: 'Active Emission Sources', value: state.sources.length, color: '#fbbf24', icon: '🏭' }
+        ].map((item, idx) => (
+          <div key={idx} style={{
+            flex: 1, minWidth: '180px', padding: '16px 20px', borderRadius: '12px',
+            background: 'rgba(30, 41, 59, 0.4)', border: '1px solid rgba(255,255,255,0.05)',
+            boxShadow: '0 4px 15px rgba(0,0,0,0.15)', display: 'flex', alignItems: 'center', gap: '16px'
+          }}>
+            <span style={{ fontSize: '28px' }}>{item.icon}</span>
+            <div>
+              <div style={{ fontSize: '11px', color: '#64748b', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.5px' }}>{item.label}</div>
+              <div style={{ fontSize: '24px', fontWeight: '800', color: item.color, marginTop: '4px' }}>{item.value}</div>
+            </div>
+          </div>
+        ))}
+      </div>
+
       <div className="panel-grid">
         {/* Ward AQI comparison */}
         <div className="card">

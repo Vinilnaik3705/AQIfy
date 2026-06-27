@@ -325,7 +325,7 @@ class EnforcementAgent:
     """Generates prioritised enforcement dispatch recommendations
     with evidence packages for field inspectors."""
 
-    THRESHOLDS = {"severe": 85, "very_poor": 70, "poor": 50}
+    THRESHOLDS = {"severe": 401, "very_poor": 301, "poor": 201}
 
     def run(
         self,

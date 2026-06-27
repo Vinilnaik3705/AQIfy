@@ -212,8 +212,12 @@ async def get_state(city: str = Query(default="all")):
                 "current_aqi": r["aqi"],
                 "aqi_in": r.get("aqi_in", r["aqi"]),
                 "sensor_count": 1,
-                "population": 10000000,
-                "vulnerable": {"hospitals": 10, "schools": 50, "elderly_pct": 12}
+                "population": (hash(city_key) % 1550000 + 250000) if "_" in city_key else (hash(city_key) % 11000000 + 4000000),
+                "vulnerable": {
+                    "hospitals": (hash(city_key) % 11 + 2) if "_" in city_key else (hash(city_key) % 51 + 15),
+                    "schools": (hash(city_key) % 46 + 15) if "_" in city_key else (hash(city_key) % 241 + 80),
+                    "elderly_pct": (hash(city_key) % 10 + 7)
+                }
             })
             
             combined_sensors.append({
@@ -416,6 +420,10 @@ async def run_dispatch(city: str = Query(default=DEFAULT_CITY)):
         return {
             "dispatches": combined_dispatches,
             "total_hotspots": len(combined_dispatches),
+            "severe_count": sum(1 for h in combined_dispatches if h["severity"] == "severe"),
+            "very_poor_count": sum(1 for h in combined_dispatches if h["severity"] == "very_poor"),
+            "poor_count": sum(1 for h in combined_dispatches if h["severity"] == "poor"),
+            "generated_at": datetime.now().isoformat(),
             "timestamp": readings_list[0][0]["timestamp"] if readings_list and readings_list[0] else None
         }
     readings = await sim.generate_readings(city)
