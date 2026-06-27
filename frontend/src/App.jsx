@@ -215,9 +215,8 @@ export default function App() {
         setTargetZoom(5)
       }
     }
-    await loadDispatches()
     if (isInitial) setLoading(false)
-  }, [loadDispatches])
+  }, [])
 
   useEffect(() => {
     loadState(true)
