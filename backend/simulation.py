@@ -589,13 +589,16 @@ class SimulationEngine:
                         wd = rng_wind.uniform(0.0, 360.0)  # wind direction in degrees
                         self._cache[f"wind_{k}"] = (ws, wd)
 
+                        factor = get_indian_seasonal_calibration(lat, lng)
+                        gas_factor = max(0.5, factor) if factor < 1.0 else factor
+
                         pollutants = {
-                            "pm25": round(pm25, 1),
-                            "pm10": round(pm10, 1),
-                            "no2": max(0.0, round(curr.get("nitrogen_dioxide", 20.0), 1)),
-                            "so2": max(0.0, round(curr.get("sulphur_dioxide", 5.0), 1)),
-                            "co": max(0.0, round(curr.get("carbon_monoxide", 300.0) / 1000.0, 2)),
-                            "o3": max(0.0, round(curr.get("ozone", 30.0), 1)),
+                            "pm25": round(pm25 * factor, 1),
+                            "pm10": round(pm10 * factor, 1),
+                            "no2": max(0.0, round(curr.get("nitrogen_dioxide", 20.0) * gas_factor, 1)),
+                            "so2": max(0.0, round(curr.get("sulphur_dioxide", 5.0) * gas_factor, 1)),
+                            "co": max(0.0, round((curr.get("carbon_monoxide", 300.0) * gas_factor) / 1000.0, 2)),
+                            "o3": max(0.0, round(curr.get("ozone", 30.0) * gas_factor, 1)),
                         }
                         aqi_in = calculate_indian_aqi(
                             pollutants["pm25"], pollutants["pm10"], pollutants["no2"],
