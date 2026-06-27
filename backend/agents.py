@@ -11,7 +11,7 @@ Implements the four core AI agents:
 from __future__ import annotations
 
 import math
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 
@@ -182,7 +182,7 @@ class AttributionAgent:
                 "narrative": "No significant emission sources detected within 10 km. Air quality is influenced by regional background levels.",
                 "location": [lat, lng],
                 "aqi": nearest_aqi,
-                "timestamp": datetime.now().isoformat(),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
             }
 
         result: List[Dict[str, Any]] = []
@@ -305,7 +305,7 @@ class AttributionAgent:
             "narrative": narrative,
             "location": [lat, lng],
             "aqi": nearest_aqi,
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
         }
 
 
@@ -439,7 +439,7 @@ class EnforcementAgent:
             "severe_count": sum(1 for h in hotspots if h["severity"] == "severe"),
             "very_poor_count": sum(1 for h in hotspots if h["severity"] == "very_poor"),
             "poor_count": sum(1 for h in hotspots if h["severity"] == "poor"),
-            "generated_at": datetime.now().isoformat(),
+            "generated_at": datetime.now(timezone.utc).isoformat(),
         }
 
     @staticmethod
@@ -632,7 +632,7 @@ class AdvisoryAgent:
             "reason": reason_text,
             "precautions": precautions,
             "vulnerable_info": ward.get("vulnerable", {}),
-            "generated_at": datetime.now().isoformat(),
+            "generated_at": datetime.now(timezone.utc).isoformat(),
         }
 
     @staticmethod

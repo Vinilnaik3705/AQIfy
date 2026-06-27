@@ -12,7 +12,7 @@ import os
 import math
 import random
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 import httpx
@@ -643,7 +643,7 @@ class SimulationEngine:
         if self._is_cached(cache_key):
             return self._cache[cache_key]
 
-        ts = datetime.now()
+        ts = datetime.now(timezone.utc)
         readings: List[Dict[str, Any]] = []
 
         if city_key == "all":
@@ -852,7 +852,7 @@ class SimulationEngine:
         if self._is_cached(cache_key):
             return self._cache[cache_key]
 
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
         grid = []
 
         if city_key == "all":
@@ -1116,7 +1116,7 @@ class SimulationEngine:
         return {
             "city": {"name": city["name"], "state": city.get("state", ""), "country": city.get("country", ""), "center": city["center"]},
             "city_key": city_key,
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "wards": ward_summaries,
             "sensors": readings,
             "sources": get_sources_for_city(city_key),

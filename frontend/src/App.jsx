@@ -22,7 +22,7 @@ import { Doughnut, Line, Bar } from 'react-chartjs-2'
 import 'leaflet/dist/leaflet.css'
 import {
   LayoutDashboard, TrendingUp, Search, AlertTriangle, Users, BarChart2,
-  Wind, Thermometer, Bell, Activity, MapPin, Zap, Shield, Factory,
+  Wind, Thermometer, Bell, BellRing, Activity, MapPin, Zap, Shield, Factory,
   Car, Hammer, Flame, Leaf, RefreshCw, Eye, FileText, Navigation,
   ChevronRight, Clock, Gauge, AlertCircle, CheckCircle, XCircle,
   Satellite, Building2, GraduationCap, Heart, ArrowUpRight,
@@ -2838,6 +2838,55 @@ function CitizensAdvisoryPopup({ state, advisory, lang, onChangeLang, selectedWa
   const [voices, setVoices] = useState([])
   const audioRef = useRef(null)
 
+  const [personalProfile, setPersonalProfile] = useState('healthy_adult')
+  const [alertChannel, setAlertChannel] = useState('none')
+  const [phoneNumber, setPhoneNumber] = useState('')
+  const [subscriptionActive, setSubscriptionActive] = useState(false)
+
+  const getPersonalizedPrefix = () => {
+    if (!subscriptionActive) return '';
+    const prefixes = {
+      en: {
+        healthy_adult: "[Personal Profile: Healthy Adult] - Standard advisory active. Maintain regular health checks.",
+        sensitive: "[Personal Profile: Child / Sensitive] - ⚠️ Children should avoid early morning or late evening outdoor play.",
+        elderly: "[Personal Profile: Elderly (60+)] - ⚠️ Seniors are advised to remain indoors and avoid taxing physical tasks.",
+        outdoor_worker: "[Personal Profile: Outdoor Worker] - 😷 Mandatory N95 respirator mask during work shifts. Take breaks in filtered indoor zones.",
+        asthma: "[Personal Profile: Respiratory/Asthma] - 🩺 Keep relief inhalers handy. Ensure air purifier is running on high speed."
+      },
+      hi: {
+        healthy_adult: "[व्यक्तिगत प्रोफ़ाइल: स्वस्थ वयस्क] - सामान्य सलाह सक्रिय। नियमित स्वास्थ्य जांच जारी रखें।",
+        sensitive: "[व्यक्तिगत प्रोफ़ाइल: बच्चे / संवेदनशील] - ⚠️ बच्चों को सुबह या देर शाम बाहर खेलने से बचना चाहिए।",
+        elderly: "[व्यक्तिगत प्रोफ़ाइल: बुजुर्ग (60+)] - ⚠️ वरिष्ठ नागरिकों को घर के अंदर रहने और भारी शारीरिक कार्यों से बचने की सलाह दी जाती है।",
+        outdoor_worker: "[व्यक्तिगत प्रोफ़ाइल: आउटडोर कार्यकर्ता] - 😷 काम के दौरान N95 मास्क पहनना अनिवार्य है। फिल्टर वाले कमरों में आराम करें।",
+        asthma: "[व्यक्तिगत प्रोफ़ाइल: श्वसन/अस्थमा] - 🩺 इनहेलर अपने पास रखें। एयर प्यूरीफायर को तेज गति पर चलाएं।"
+      },
+      kn: {
+        healthy_adult: "[ವೈಯಕ್ತಿಕ ಪ್ರೊಫೈಲ್: ಆರೋಗ್ಯವಂತ ವಯಸ್ಕ] - ಸಾಮಾನ್ಯ ಆರೋಗ್ಯ ಸಲಹೆ ಸಕ್ರಿಯವಾಗಿದೆ.",
+        sensitive: "[ವೈಯಕ್ತಿಕ ಪ್ರೊಫೈಲ್: ಮಕ್ಕಳು / ಸೂಕ್ಷ್ಮ ಗುಂಪು] - ⚠️ ಮಕ್ಕಳು ಬೆಳಿಗ್ಗೆ ಅಥವಾ ಸಂಜೆ ಹೊರಗೆ ಆಟವಾಡುವುದನ್ನು ತಪ್ಪಿಸಬೇಕು.",
+        elderly: "[ವೈಯಕ್ತಿಕ ಪ್ರೊಫೈಲ್: ಹಿರಿಯ ನಾಗರಿಕರು (60+)] - ⚠️ ಹಿರಿಯರು ಮನೆಯೊಳಗೆ ಇರಲು ಮತ್ತು ಕಠಿಣ ಶ್ರಮದ ಕೆಲಸಗಳನ್ನು ಮಾಡದಂತೆ ಸೂಚಿಸಲಾಗಿದೆ.",
+        outdoor_worker: "[ವೈಯಕ್ತಿಕ ಪ್ರೊಫೈಲ್: ಹೊರಾಂಗಣ ಕಾರ್ಮಿಕರು] - 😷 ಕೆಲಸದ ಅವಧಿಯಲ್ಲಿ N95 ಮಾಸ್ಕ್ ಕಡ್ಡಾಯವಾಗಿ ಧರಿಸಿ. ಸ್ವಚ್ಛ ಗಾಳಿಯ ಕೊಠಡಿಯಲ್ಲಿ ವಿಶ್ರಾಂತಿ ಪಡೆಯಿರಿ.",
+        asthma: "[ವೈಯಕ್ತಿಕ ಪ್ರೊಫೈಲ್: ಶ್ವಾಸಕೋಶದ ತೊಂದರೆ/ಅಸ್ತಮಾ] - 🩺 ನಿಮ್ಮ ಇನ್ಹೇಲರ್ಗಳನ್ನು ಹತ್ತಿರ ಇಟ್ಟುಕೊಳ್ಳಿ. ಏರ್ ಪ್ಯೂರಿಫೈಯರ್ ಆನ್ ಮಾಡಿ."
+      },
+      ta: {
+        healthy_adult: "[தனிநபர் சுயவிவரம்: ஆரோக்கியமான முதியவர்] - நிலையான ஆலோசனை செயலில் உள்ளது.",
+        sensitive: "[தனிநபர் சுயவிவரம்: குழந்தைகள் / உணர்திறன்] - ⚠️ குழந்தைகள் அதிகாலை அல்லது மாலை நேரங்களில் வெளியே விளையாடுவதைத் தவிர்க்க வேண்டும்.",
+        elderly: "[தனிநபர் சுயவிவரம்: முதியவர்கள் (60+)] - ⚠️ முதியவர்கள் வீட்டிற்குள் இருக்கவும், கடினமான உடலுழைப்பைத் தவிர்க்கவும் அறிவுறுத்தப்படுகிறார்கள்.",
+        outdoor_worker: "[தனிநபர் சுயவிவரம்: வெளிப்புற பணியாளர்கள்] - 😷 பணியின் போது N95 முகமூடி அணிவது கட்டாயமாகும். காற்று சுத்திகரிக்கப்பட்ட இடங்களில் ஓய்வெடுக்கவும்.",
+        asthma: "[தனிநபர் சுயவிவரம்: சுவாசம்/ஆஸ்துமா] - 🩺 இன்ஹேலர்களை எப்போதும் கையில் வைத்திருக்கவும். ஏர் பியூரிஃபையரை இயக்கவும்."
+      },
+      te: {
+        healthy_adult: "[వ్యక్తిగత ప్రొఫైల్: ఆరోగ్యకరమైన వయోజన] - సాధారణ సలహా సక్రియంగా ఉంది.",
+        sensitive: "[వ్యಕ್ತಿగత ప్రొఫైల్: పిల్లలు / సున్నితమైన సమూహం] - ⚠️ పిల్లలు ఉదయం లేదా సాయంత్రం వేళల్లో బయట ఆడుకోకూడదు.",
+        elderly: "[వ్యಕ್ತಿగత ప్రొఫైల్: వృద్ధులు (60+)] - ⚠️ వృద్ధులు ఇంట్లోనే ఉండాలని మరియు శారీరక శ్రమను నివారించాలని సూచించబడింది.",
+        outdoor_worker: "[వ్యಕ್ತಿగత ప్రొఫైల్: అవుట్డోర్ వర్కర్స్] - 😷 పని వేళల్లో N95 మాస్క్ తప్పనిసరిగాధరించాలి. ఫిల్టర్ చేయబడిన గదుల్లో విశ్రాంతి తీసుకోండి.",
+        asthma: "[వ్యక్తిగత ప్రొఫైల్: శ్వాసకోశ/ఆస్తమా] - 🩺 ఇన్హేలర్లను అందుబాటులో ఉంచుకోండి. ఎయిర్ ప్యూరిఫైయర్ ఆన్ చేసి ఉంచండి."
+      }
+    };
+    const langKey = lang || 'en';
+    const profileKey = personalProfile || 'healthy_adult';
+    return (prefixes[langKey] || prefixes['en'])[profileKey] + " ";
+  };
+
   useEffect(() => {
     if (typeof window === 'undefined' || !window.speechSynthesis) return
     const updateVoices = () => {
@@ -2906,7 +2955,8 @@ function CitizensAdvisoryPopup({ state, advisory, lang, onChangeLang, selectedWa
     const transLevel = levelTranslations[tLang]?.[advisory.level] || advisory.level.replace('_', ' ')
     const translatedPrecautions = advisory.precautions.map(p => precautionTranslations[tLang]?.[p] || p)
     
-    const textToRead = speakTemplates[tLang](
+    const prefixText = getPersonalizedPrefix()
+    const textToRead = prefixText + speakTemplates[tLang](
       advisory.ward_name,
       Math.round(advisory.aqi),
       transLevel,
@@ -3088,6 +3138,7 @@ function CitizensAdvisoryPopup({ state, advisory, lang, onChangeLang, selectedWa
                 </div>
               </div>
               <div className="advisory-text" style={{ fontSize: 14, margin: '12px 0', lineHeight: 1.5 }}>
+                <span style={{ fontWeight: '800', color: '#0f172a' }}>{getPersonalizedPrefix()}</span>
                 {advisory.advisory}
               </div>
               
@@ -3148,6 +3199,127 @@ function CitizensAdvisoryPopup({ state, advisory, lang, onChangeLang, selectedWa
                   </div>
                 </div>
               )}
+
+              {/* Personal Alert Subscription Panel */}
+              <div style={{ marginTop: 14, borderTop: '1px solid var(--border)', paddingTop: 12 }}>
+                <div style={{ fontSize: 12, fontWeight: '750', color: '#0f172a', marginBottom: 8, display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <Bell size={13} color="#10b981" />
+                  <span>Personal Alert Subscription</span>
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    <div style={{ flex: 1 }}>
+                      <label style={{ fontSize: 10, color: 'var(--text-muted)', display: 'block', marginBottom: 2 }}>Profile</label>
+                      <select
+                        className="select-field"
+                        style={{ width: '100%', padding: '4px 6px', fontSize: 12 }}
+                        value={personalProfile}
+                        onChange={e => {
+                          setPersonalProfile(e.target.value);
+                          setSubscriptionActive(false);
+                        }}
+                      >
+                        <option value="healthy_adult">Healthy Adult</option>
+                        <option value="sensitive">Child / Sensitive Group</option>
+                        <option value="elderly">Elderly (60+)</option>
+                        <option value="outdoor_worker">Outdoor Worker</option>
+                        <option value="asthma">Respiratory / Asthma Condition</option>
+                      </select>
+                    </div>
+                    <div style={{ flex: 1 }}>
+                      <label style={{ fontSize: 10, color: 'var(--text-muted)', display: 'block', marginBottom: 2 }}>Channel</label>
+                      <select
+                        className="select-field"
+                        style={{ width: '100%', padding: '4px 6px', fontSize: 12 }}
+                        value={alertChannel}
+                        onChange={e => {
+                          setAlertChannel(e.target.value);
+                          setSubscriptionActive(false);
+                        }}
+                      >
+                        <option value="none">View Only</option>
+                        <option value="sms">SMS Text Alert</option>
+                        <option value="ivr">IVR Voice Call</option>
+                        <option value="app">Mobile App Push</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  {(alertChannel === 'sms' || alertChannel === 'ivr') && (
+                    <div style={{ animation: 'fadeIn 0.2s ease-in-out' }}>
+                      <label style={{ fontSize: 10, color: 'var(--text-muted)', display: 'block', marginBottom: 2 }}>Phone Number</label>
+                      <input
+                        type="tel"
+                        className="select-field"
+                        placeholder="e.g. +91 98765 43210"
+                        style={{ width: '100%', padding: '5px 8px', fontSize: 12, boxSizing: 'border-box' }}
+                        value={phoneNumber}
+                        onChange={e => {
+                          setPhoneNumber(e.target.value);
+                          setSubscriptionActive(false);
+                        }}
+                      />
+                    </div>
+                  )}
+
+                  <button
+                    className="btn btn-primary btn-sm"
+                    style={{
+                      width: '100%',
+                      background: subscriptionActive ? '#10b981' : '#3b82f6',
+                      color: '#ffffff',
+                      border: 'none',
+                      padding: '8px',
+                      borderRadius: '8px',
+                      fontWeight: '700',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: '6px',
+                      transition: 'all 0.2s'
+                    }}
+                    onClick={() => {
+                      setSubscriptionActive(true);
+                    }}
+                  >
+                    {subscriptionActive ? (
+                      <>
+                        <CheckCircle size={12} />
+                        <span>Profile Advisory Applied</span>
+                      </>
+                    ) : (
+                      <>
+                        <BellRing size={12} />
+                        <span>Apply & Subscribe</span>
+                      </>
+                    )}
+                  </button>
+
+                  {subscriptionActive && (
+                    <div style={{
+                      padding: '8px 10px',
+                      background: 'rgba(16,185,129,0.06)',
+                      border: '1px solid rgba(16,185,129,0.25)',
+                      borderRadius: '6px',
+                      color: '#047857',
+                      fontSize: '11px',
+                      fontWeight: '600',
+                      display: 'flex',
+                      alignItems: 'flex-start',
+                      gap: '6px',
+                      marginTop: '2px',
+                      lineHeight: '1.3',
+                      animation: 'fadeIn 0.2s ease-in-out'
+                    }}>
+                      <BellRing size={11} style={{ marginTop: '2px', flexShrink: 0 }} />
+                      <span>
+                        Advisory personalized! {alertChannel !== 'none' && `Alert subscription registered successfully for ${alertChannel.toUpperCase()} alerts.`}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              </div>
 
               {/* Emergency Resources — Nearby Hospitals & Medical Stores */}
               <div style={{ marginTop: 14, borderTop: '1px solid var(--border)', paddingTop: 12 }}>

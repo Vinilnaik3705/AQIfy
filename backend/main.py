@@ -14,7 +14,7 @@ if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 import httpx
 from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -425,7 +425,7 @@ async def run_dispatch(city: str = Query(default=DEFAULT_CITY)):
             "severe_count": sum(1 for h in combined_dispatches if h["severity"] == "severe"),
             "very_poor_count": sum(1 for h in combined_dispatches if h["severity"] == "very_poor"),
             "poor_count": sum(1 for h in combined_dispatches if h["severity"] == "poor"),
-            "generated_at": datetime.now().isoformat(),
+            "generated_at": datetime.now(timezone.utc).isoformat(),
             "timestamp": readings_list[0][0]["timestamp"] if readings_list and readings_list[0] else None
         }
     readings = await sim.generate_readings(city)
