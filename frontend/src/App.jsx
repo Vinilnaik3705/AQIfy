@@ -153,6 +153,7 @@ const LANGUAGES = [
   { code: 'hi', label: 'हिन्दी (Hindi)' },
   { code: 'kn', label: 'ಕನ್ನಡ (Kannada)' },
   { code: 'ta', label: 'தமிழ் (Tamil)' },
+  { code: 'te', label: 'తెలుగు (Telugu)' },
 ]
 
 /* ── API Helpers ────────────────────────────────────────────────────────── */
@@ -1983,12 +1984,41 @@ function getPrecautionEmoji(precautionText) {
 
 function CitizensAdvisoryPopup({ state, advisory, lang, onChangeLang, selectedWard, onSelectWard, isOpen, onToggle }) {
   const [isSpeaking, setIsSpeaking] = useState(false)
+  const [nearbyPlaces, setNearbyPlaces] = useState(null)
+  const [nearbyLoading, setNearbyLoading] = useState(false)
 
   useEffect(() => {
     return () => {
       window.speechSynthesis.cancel()
     }
   }, [isOpen])
+
+  // Fetch nearby hospitals & pharmacies when ward changes and popup is open
+  useEffect(() => {
+    if (!isOpen || !selectedWard?.center) return
+    const [lat, lng] = selectedWard.center
+    setNearbyLoading(true)
+    const radius = 3000 // 3km radius
+    const query = `[out:json][timeout:10];(
+      node["amenity"="hospital"](around:${radius},${lat},${lng});
+      node["amenity"="pharmacy"](around:${radius},${lat},${lng});
+    );out body 10;`
+    fetch(`https://overpass-api.de/api/interpreter?data=${encodeURIComponent(query)}`)
+      .then(res => res.json())
+      .then(data => {
+        const places = (data.elements || []).map(el => ({
+          name: el.tags?.name || (el.tags?.amenity === 'hospital' ? 'Hospital' : 'Medical Store'),
+          type: el.tags?.amenity === 'hospital' ? 'hospital' : 'pharmacy',
+          phone: el.tags?.phone || el.tags?.['contact:phone'] || null,
+          address: [el.tags?.['addr:street'], el.tags?.['addr:city']].filter(Boolean).join(', ') || null,
+          lat: el.lat,
+          lng: el.lon,
+        }))
+        setNearbyPlaces(places)
+        setNearbyLoading(false)
+      })
+      .catch(() => { setNearbyPlaces([]); setNearbyLoading(false) })
+  }, [isOpen, selectedWard])
 
   if (!state) return null
 
@@ -2007,6 +2037,7 @@ function CitizensAdvisoryPopup({ state, advisory, lang, onChangeLang, selectedWa
     if (lang === 'hi') utterance.lang = 'hi-IN'
     else if (lang === 'kn') utterance.lang = 'kn-IN'
     else if (lang === 'ta') utterance.lang = 'ta-IN'
+    else if (lang === 'te') utterance.lang = 'te-IN'
     else utterance.lang = 'en-IN'
 
     utterance.onend = () => setIsSpeaking(false)
@@ -2182,6 +2213,46 @@ function CitizensAdvisoryPopup({ state, advisory, lang, onChangeLang, selectedWa
                   </div>
                 </div>
               )}
+
+              {/* Emergency Resources — Nearby Hospitals & Medical Stores */}
+              <div style={{ marginTop: 14, borderTop: '1px solid var(--border-subtle)', paddingTop: 12 }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{ fontSize: 16 }}>🚑</span> Nearby Emergency Resources
+                </div>
+                {nearbyLoading ? (
+                  <div style={{ fontSize: 12, color: 'var(--text-muted)', padding: '8px 0' }}>Searching nearby hospitals & medical stores...</div>
+                ) : nearbyPlaces && nearbyPlaces.length > 0 ? (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    {nearbyPlaces.filter(p => p.type === 'hospital').length > 0 && (
+                      <div>
+                        <div style={{ fontSize: 10, fontWeight: 600, color: '#ef4444', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 4 }}>🏥 Hospitals</div>
+                        {nearbyPlaces.filter(p => p.type === 'hospital').slice(0, 3).map((p, i) => (
+                          <div key={`h-${i}`} style={{ background: 'rgba(239,68,68,0.06)', padding: '6px 8px', borderRadius: 6, marginBottom: 4, fontSize: 12, borderLeft: '2px solid #ef4444' }}>
+                            <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{p.name}</div>
+                            {p.address && <div style={{ color: 'var(--text-muted)', fontSize: 11 }}>📍 {p.address}</div>}
+                            {p.phone && <div style={{ color: 'var(--accent-primary)', fontSize: 11 }}>📞 {p.phone}</div>}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {nearbyPlaces.filter(p => p.type === 'pharmacy').length > 0 && (
+                      <div>
+                        <div style={{ fontSize: 10, fontWeight: 600, color: '#22c55e', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 4 }}>💊 Medical Stores / Pharmacies</div>
+                        {nearbyPlaces.filter(p => p.type === 'pharmacy').slice(0, 3).map((p, i) => (
+                          <div key={`p-${i}`} style={{ background: 'rgba(34,197,94,0.06)', padding: '6px 8px', borderRadius: 6, marginBottom: 4, fontSize: 12, borderLeft: '2px solid #22c55e' }}>
+                            <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{p.name}</div>
+                            {p.address && <div style={{ color: 'var(--text-muted)', fontSize: 11 }}>📍 {p.address}</div>}
+                            {p.phone && <div style={{ color: 'var(--accent-primary)', fontSize: 11 }}>📞 {p.phone}</div>}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ) : nearbyPlaces && nearbyPlaces.length === 0 ? (
+                  <div style={{ fontSize: 12, color: 'var(--text-muted)', padding: '6px 0' }}>No hospitals or pharmacies found within 3 km radius.</div>
+                ) : null}
+                <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 6 }}>Emergency Helpline: <span style={{ color: '#ef4444', fontWeight: 700 }}>112</span> | Ambulance: <span style={{ color: '#ef4444', fontWeight: 700 }}>108</span></div>
+              </div>
 
               <div style={{ marginTop: 12, fontSize: 10, color: 'var(--text-muted)' }}>
                 Generated at {new Date(advisory.generated_at).toLocaleTimeString()}
