@@ -314,6 +314,7 @@ export default function App() {
       <div className="main-content">
         <Header
           tab={tab}
+          setTab={setTab}
           cityAqi={cityAqi}
           alertCount={alertCount}
           weather={state?.weather}
@@ -486,51 +487,67 @@ function HeaderSearch({ onSelectPlace }) {
 
 /* ── Header ────────────────────────────────────────────────────────────── */
 
-function Header({ tab, cityAqi, alertCount, weather, onSelectPlace }) {
-  const currentTab = TABS.find(t => t.id === tab)
+function Header({ tab, setTab, cityAqi, alertCount, weather, onSelectPlace }) {
+  const navItems = [
+    { id: 'command', label: 'Dashboard' },
+    { id: 'enforcement', label: 'Disputed Items' },
+    { id: 'forecast', label: 'Action Plan' },
+    { id: 'analytics', label: 'Documents' },
+    { id: 'attribution', label: 'Source Analysis' },
+  ]
+
   return (
     <header className="header">
-      <div className="header-title">
-        <span className="icon" style={{ color: '#38bdf8' }}>{currentTab?.icon}</span>
-        {currentTab?.label}
+      <div className="brand-section">
+        Weather<span className="brand-swim">Swim</span>
       </div>
-      <div className="header-stats">
-        <div className="header-stat" style={{ marginRight: '16px' }}>
-          <HeaderSearch onSelectPlace={onSelectPlace} />
+
+      <div className="header-nav-pills">
+        {navItems.map(item => (
+          <button
+            key={item.id}
+            className={`nav-pill ${tab === item.id ? 'active' : ''}`}
+            onClick={() => setTab(item.id)}
+          >
+            {item.label}
+          </button>
+        ))}
+      </div>
+
+      <div className="header-right">
+        <HeaderSearch onSelectPlace={onSelectPlace} />
+        
+        {/* Filter button */}
+        <button className="icon-btn" title="Filter options">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"></polygon>
+          </svg>
+        </button>
+
+        {/* Notifications button */}
+        <button className="icon-btn" title="Alerts & Notifications" style={{ position: 'relative' }}>
+          <Bell size={16} color={alertCount > 0 ? '#ef4444' : '#475569'} />
+          {alertCount > 0 && (
+            <span style={{ position: 'absolute', top: '2px', right: '2px', width: '8px', height: '8px', borderRadius: '50%', background: '#ef4444' }} />
+          )}
+        </button>
+
+        {/* Settings button */}
+        <button className="icon-btn" title="Settings">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="12" cy="12" r="3"></circle>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+          </svg>
+        </button>
+
+        {/* Profile Card */}
+        <div className="profile-card">
+          <div className="profile-avatar">☘</div>
+          <div className="profile-info">
+            <span className="profile-name">Cansaas Agency</span>
+            <span className="profile-sub">cansaas.weather.com</span>
+          </div>
         </div>
-        <div className="header-stat" style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
-          <span style={{ fontSize: '13px' }}>🇮🇳</span>
-          <span style={{ fontSize: '11px', fontWeight: '700', color: '#38bdf8', padding: '2px 7px', border: '1px solid rgba(56,189,248,0.3)', borderRadius: '4px', background: 'rgba(56,189,248,0.08)' }}>AQI-IN</span>
-        </div>
-        <div className="header-stat">
-          <span style={{ display: 'inline-block', width: '7px', height: '7px', borderRadius: '50%', background: '#22c55e', boxShadow: '0 0 6px #22c55e', animation: 'pulse 2s infinite' }} />
-          <span style={{ fontSize: '12px', color: '#22c55e', fontWeight: '600' }}>Live</span>
-        </div>
-        <div className="header-stat" style={{ gap: '5px' }}>
-          <Gauge size={13} color="#94a3b8" />
-          <span style={{ fontSize: '12px', color: '#94a3b8' }}>Avg:</span>
-          <span className="value" style={{ color: aqiColor(cityAqi), fontWeight: '700' }}>{cityAqi}</span>
-        </div>
-        <div className="header-stat" style={{ gap: '5px' }}>
-          <Bell size={13} color={alertCount > 0 ? '#ef4444' : '#475569'} />
-          <span className="value" style={{ color: alertCount > 0 ? '#ef4444' : '#64748b', fontWeight: '700' }}>{alertCount}</span>
-        </div>
-        {weather && (
-          <>
-            {weather.temperature_c !== null && (
-              <div className="header-stat" style={{ gap: '4px' }}>
-                <Thermometer size={13} color="#94a3b8" />
-                <span className="value">{weather.temperature_c}°C</span>
-              </div>
-            )}
-            {weather.wind_speed_kmh !== null && (
-              <div className="header-stat" style={{ gap: '4px' }}>
-                <Wind size={13} color="#94a3b8" />
-                <span className="value">{weather.wind_speed_kmh} km/h</span>
-              </div>
-            )}
-          </>
-        )}
       </div>
     </header>
   )
@@ -616,177 +633,385 @@ function EmissionSourcePopup({ src }) {
     reverseGeocode();
     return () => { active = false; };
   }, [src.location]);
-
-  const road = address?.road || address?.suburb || address?.neighbourhood || '';
-  const area = address?.county || address?.city_district || address?.city || address?.state_district || '';
-  const stateName = address?.state || '';
-  const [lat, lng] = src.location;
-
-  const SOURCE_ICON = { industrial: '🏭', vehicular: '🚗', construction: '🏗️', waste_burning: '🔥' };
-
-  return (
-    <div style={{ minWidth: '220px', padding: '4px', fontFamily: 'inherit' }}>
-      <div style={{ fontWeight: '700', color: '#f1f5f9', marginBottom: '3px' }}>
-        {SOURCE_ICON[src.category] || '�'} {src.name.replace("Satellite Fire Anomaly (MODIS/VIIRS)", "Active Waste Burning Site")}
-      </div>
-      <span style={{ fontSize: '11px', color: '#64748b', textTransform: 'capitalize', display: 'block', marginBottom: '8px' }}>
-        {src.category.replace('_', ' ')}
-      </span>
-
-      {loading ? (
-        <span style={{ fontSize: '11px', color: '#64748b' }}>Locating address…</span>
-      ) : address ? (
-        <div style={{ fontSize: '12px', color: '#94a3b8', marginBottom: '8px' }}>
-          {road && <div>{road}</div>}
-          {area && <div>{area}</div>}
-          {stateName && <div>{stateName}</div>}
-          <div style={{ fontSize: '10px', color: '#475569', marginTop: '3px', fontFamily: 'monospace' }}>
-            {lat.toFixed(4)}, {lng.toFixed(4)}
-          </div>
-        </div>
-      ) : (
-        <div style={{ fontSize: '11px', color: '#475569', marginBottom: '8px', fontFamily: 'monospace' }}>
-          {lat.toFixed(4)}, {lng.toFixed(4)}
-        </div>
-      )}
-
-      <a
-        href={`https://firms.modaps.eosdis.nasa.gov/map/#d:24hrs;@${lat},${lng},14z`}
-        target="_blank"
-        rel="noopener noreferrer"
-        style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', fontSize: '11px', color: '#38bdf8', textDecoration: 'none', fontWeight: '600' }}
-      >
-        🛰️ View on NASA FIRMS
-      </a>
-    </div>
-  );
 }
 
 /* ── Command Center ────────────────────────────────────────────────────── */
 
 function CommandCenter({ state, selectedWard, onSelectWard, mapStyle, setMapStyle, customPlaces, targetCenter, targetZoom }) {
+  const [activeTrendTab, setActiveTrendTab] = useState('REAL TIME')
+
   if (!state) return null;
+
+  // Resolve values for floating circles
+  const temp = selectedWard?.weather?.temperature_c ?? state.weather?.temperature_c ?? 23;
+  const humidity = selectedWard?.weather?.humidity_pct ?? state.weather?.humidity_pct ?? 84;
+  const windKmh = selectedWard?.weather?.wind_speed_kmh ?? state.weather?.wind_speed_kmh ?? 7.5;
+  const windMs = (windKmh / 3.6).toFixed(1);
+  const windDir = state.weather?.wind_direction_degrees ?? 240;
+  
+  // Calculate PM2.5 value
+  let pm25 = 5;
+  if (selectedWard?.pollutants) {
+    pm25 = selectedWard.pollutants.pm25;
+  } else if (state.sensors.length > 0) {
+    // Average PM2.5 across active sensors
+    const sensorsWithPm = state.sensors.filter(s => s.pollutants?.pm25 != null);
+    if (sensorsWithPm.length > 0) {
+      pm25 = sensorsWithPm.reduce((s, r) => s + r.pollutants.pm25, 0) / sensorsWithPm.length;
+    }
+  }
+  pm25 = Math.round(pm25);
+
+  const trendAqi = selectedWard?.aqi_in ?? selectedWard?.current_aqi ?? 120;
+
+  // Render chart configurations
+  const trendData = {
+    labels: ['06:00', '08:00', '10:00', '12:00', '14:00', '16:00', '18:00', '20:00'],
+    datasets: [{
+      label: 'AQI Level',
+      data: [
+        Math.round(trendAqi * 0.75),
+        Math.round(trendAqi * 0.85),
+        Math.round(trendAqi * 0.95),
+        Math.round(trendAqi * 1.15),
+        Math.round(trendAqi * 1.05),
+        Math.round(trendAqi * 0.8),
+        Math.round(trendAqi * 0.9),
+        Math.round(trendAqi * 1.0)
+      ],
+      borderColor: '#10b981',
+      backgroundColor: 'rgba(16, 185, 129, 0.05)',
+      fill: true,
+      tension: 0.4,
+      borderWidth: 2,
+      pointRadius: 2,
+    }]
+  };
+
+  const carbonData = {
+    labels: ['06:00', '08:00', '10:00', '12:00', '14:00', '16:00', '18:00', '20:00'],
+    datasets: [
+      {
+        label: 'Current',
+        data: [
+          Math.round(trendAqi * 0.75 * 0.8),
+          Math.round(trendAqi * 0.85 * 0.8),
+          Math.round(trendAqi * 0.95 * 0.75),
+          Math.round(trendAqi * 1.15 * 0.72),
+          Math.round(trendAqi * 1.05 * 0.76),
+          Math.round(trendAqi * 0.8 * 0.8),
+          Math.round(trendAqi * 0.9 * 0.82),
+          Math.round(trendAqi * 1.0 * 0.8)
+        ],
+        borderColor: '#10b981',
+        backgroundColor: 'transparent',
+        borderWidth: 2,
+        tension: 0.4,
+        pointRadius: 0
+      },
+      {
+        label: 'Baseline',
+        data: [
+          Math.round(trendAqi * 0.75),
+          Math.round(trendAqi * 0.85),
+          Math.round(trendAqi * 0.95),
+          Math.round(trendAqi * 1.15),
+          Math.round(trendAqi * 1.05),
+          Math.round(trendAqi * 0.8),
+          Math.round(trendAqi * 0.9),
+          Math.round(trendAqi * 1.0)
+        ],
+        borderColor: '#f59e0b',
+        backgroundColor: 'transparent',
+        borderWidth: 2,
+        tension: 0.4,
+        pointRadius: 0
+      }
+    ]
+  };
+
   return (
-    <div className="content-area">
-      <div className="map-section">
-        <MapContainer
-          center={state.city.center}
-          zoom={5}
-          minZoom={4}
-          maxBounds={[[6.0, 65.0], [38.0, 99.0]]}
-          maxBoundsViscosity={1.0}
-          scrollWheelZoom={true}
-        >
-          <MapLayersControl />
-          <ChangeMapView center={targetCenter} zoom={targetZoom} />
+    <div className="content-area" style={{ display: 'flex', flexDirection: 'row', gap: '16px', flex: 1, overflow: 'hidden' }}>
+      {/* Left side containing Map and Bottom Deck */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', flex: 1, minWidth: 0 }}>
+        
+        {/* Map panel */}
+        <div className="map-section">
+          <MapContainer
+            center={state.city.center}
+            zoom={5}
+            minZoom={4}
+            maxBounds={[[6.0, 65.0], [38.0, 99.0]]}
+            maxBoundsViscosity={1.0}
+            scrollWheelZoom={true}
+          >
+            <MapLayersControl />
+            <ChangeMapView center={targetCenter} zoom={targetZoom} />
+            
+            {/* Preset City Markers */}
+            {state.sensors.map(s => {
+              const ward = state.wards.find(w => w.id === s.ward_id)
+              const placeLabel = ward ? ward.name : s.sensor_id
+              const aqiVal = s.aqi_in ?? s.aqi;
+              const isWard = s.ward_id && s.ward_id.includes('_') && (
+                s.ward_id.startsWith('delhi_') || s.ward_id.startsWith('mumbai_') ||
+                s.ward_id.startsWith('bengaluru_') || s.ward_id.startsWith('chennai_') ||
+                s.ward_id.startsWith('hyderabad_') || s.ward_id.startsWith('kolkata_')
+              );
+              return (
+                <Marker
+                  key={s.sensor_id}
+                  position={s.location}
+                  icon={createAqiIcon(aqiVal, isWard)}
+                  eventHandlers={{
+                    click: () => {
+                      if (ward) onSelectWard(ward);
+                    }
+                  }}
+                >
+                  <Popup>
+                    <div>
+                      <strong>📍 {placeLabel}</strong><br />
+                      AQI: <strong style={{ color: aqiColor(aqiVal) }}>{aqiVal}</strong>
+                    </div>
+                  </Popup>
+                </Marker>
+              )
+            })}
+
+            {/* Custom Searched Places */}
+            {customPlaces && customPlaces.map(cp => {
+              const aqiVal = cp.aqi_in ?? cp.current_aqi;
+              return (
+                <Marker
+                  key={cp.id}
+                  position={cp.center}
+                  icon={createAqiIcon(aqiVal)}
+                  eventHandlers={{
+                    click: () => {
+                      onSelectWard(cp);
+                    }
+                  }}
+                >
+                  <Popup>
+                    <div>
+                      <strong>📍 {cp.name}</strong><br />
+                      AQI: <strong style={{ color: aqiColor(aqiVal) }}>{aqiVal}</strong>
+                    </div>
+                  </Popup>
+                </Marker>
+              )
+            })}
+
+            {/* Emission Sources */}
+            {state.sources && state.sources.map(src => (
+              <CircleMarker
+                key={src.id}
+                center={src.location}
+                radius={6}
+                pathOptions={{
+                  fillColor: SOURCE_COLORS[src.category] || '#888',
+                  fillOpacity: 0.9,
+                  color: '#fff',
+                  weight: 1,
+                }}
+              >
+                <Popup>
+                  <EmissionSourcePopup src={src} />
+                </Popup>
+              </CircleMarker>
+            ))}
+          </MapContainer>
+
+          {/* Floating Metric Overlay circles */}
+          <div className="floating-metric-overlay">
+            {/* Circle 1: Rainfall */}
+            <div className="floating-metric-circle pos-top-left">
+              <span className="metric-circle-icon">🌧</span>
+              <span className="metric-circle-value">0<span className="metric-circle-unit">mm</span></span>
+              <span className="metric-circle-label">Rainfall</span>
+            </div>
+
+            {/* Circle 2: Humidity */}
+            <div className="floating-metric-circle pos-top-right">
+              <span className="metric-circle-icon">💧</span>
+              <span className="metric-circle-value">{humidity}<span className="metric-circle-unit">%</span></span>
+              <span className="metric-circle-label">Humidity</span>
+            </div>
+
+            {/* Circle 3: Temperature */}
+            <div className="floating-metric-circle pos-bottom-left">
+              <span className="metric-circle-icon">🌡</span>
+              <span className="metric-circle-value">{Math.round(temp)}<span className="metric-circle-unit">°C</span></span>
+              <span className="metric-circle-label">Temperature</span>
+            </div>
+
+            {/* Circle 4: PM2.5 Index */}
+            <div className="floating-metric-circle pos-bottom-right">
+              <span className="metric-circle-icon">⚡</span>
+              <span className="metric-circle-value">{pm25}<span className="metric-circle-unit">idx</span></span>
+              <span className="metric-circle-label">PM2.5/AIR</span>
+            </div>
+
+            {/* Central green map pin */}
+            <div className="map-center-indicator">📍</div>
+            <div className="map-center-label">{selectedWard?.name ?? state.city.name}</div>
+
+            {/* Horizontal Legend at bottom-left */}
+            <div className="map-legend-horizontal">
+              <div className="legend-label-row">
+                <span>Low</span>
+                <span>High</span>
+              </div>
+              <div className="legend-gradient-bar" />
+              <div className="legend-subtext">
+                <span>ⓘ PM2.5 concentration</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Bottom Cards Deck */}
+        <div className="bottom-cards-deck">
           
-          {/* Preset City Markers */}
-          {state.sensors.map(s => {
-            const ward = state.wards.find(w => w.id === s.ward_id)
-            const placeLabel = ward ? ward.name : s.sensor_id
-            const aqiVal = s.aqi_in ?? s.aqi;
-            const isWard = s.ward_id && s.ward_id.includes('_') && (
-              s.ward_id.startsWith('delhi_') || s.ward_id.startsWith('mumbai_') ||
-              s.ward_id.startsWith('bengaluru_') || s.ward_id.startsWith('chennai_') ||
-              s.ward_id.startsWith('hyderabad_') || s.ward_id.startsWith('kolkata_')
-            );
-            return (
-              <Marker
-                key={s.sensor_id}
-                position={s.location}
-                icon={createAqiIcon(aqiVal, isWard)}
-                eventHandlers={{
-                  click: () => {
-                    if (ward) onSelectWard(ward);
+          {/* Card 1: Pollution Trend Analysis */}
+          <div className="glass-deck-card">
+            <div className="card-header-row">
+              <span className="deck-card-title">Pollution Trend Analysis</span>
+              <div className="deck-card-pills">
+                {['REAL TIME', 'WEEKLY', 'MONTHLY', 'YEARLY'].map(t => (
+                  <button
+                    key={t}
+                    className={`deck-card-pill-btn ${activeTrendTab === t ? 'active' : ''}`}
+                    onClick={() => setActiveTrendTab(t)}
+                  >
+                    {t}
+                  </button>
+                ))}
+              </div>
+            </div>
+            
+            <div style={{ height: '140px', position: 'relative' }}>
+              <Line
+                data={trendData}
+                options={{
+                  responsive: true,
+                  maintainAspectRatio: false,
+                  plugins: { legend: { display: false } },
+                  scales: {
+                    x: { ticks: { color: '#94a3b8', font: { size: 9 } }, grid: { display: false } },
+                    y: { ticks: { color: '#94a3b8', font: { size: 9 } }, grid: { color: 'rgba(0,0,0,0.03)' } }
                   }
                 }}
-              >
-                <Popup>
-                  <div>
-                    <strong>📍 {placeLabel}</strong><br />
-                    AQI: <strong style={{ color: aqiColor(aqiVal) }}>{aqiVal}</strong>
-                  </div>
-                </Popup>
-              </Marker>
-            )
-          })}
+              />
+            </div>
+          </div>
 
-          {/* Custom Searched Places */}
-          {customPlaces && customPlaces.map(cp => {
-            const aqiVal = cp.aqi_in ?? cp.current_aqi;
-            return (
-              <Marker
-                key={cp.id}
-                position={cp.center}
-                icon={createAqiIcon(aqiVal)}
-                eventHandlers={{
-                  click: () => {
-                    onSelectWard(cp);
+          {/* Card 2: Air Flow Status */}
+          <div className="glass-deck-card">
+            <span className="deck-card-title">Air Flow Status</span>
+            
+            <div className="wind-dial-container">
+              <div className="wind-speed-large">
+                <span className="wind-val">{windKmh.toFixed(1)} <span style={{ fontSize: '18px', fontWeight: 600 }}>km/h</span></span>
+                <span className="wind-lbl">Wind Speed</span>
+              </div>
+
+              {/* Compass Dial */}
+              <div className="compass-dial">
+                <span className="compass-label lbl-n">N</span>
+                <span className="compass-label lbl-e">E</span>
+                <span className="compass-label lbl-s">S</span>
+                <span className="compass-label lbl-w">W</span>
+                
+                {/* Needle */}
+                <div 
+                  className="compass-arrow-needle" 
+                  style={{ transform: `rotate(${windDir}deg)` }} 
+                />
+
+                <div className="compass-center-bubble">
+                  <span className="compass-center-val">{windMs}</span>
+                  <span className="compass-center-lbl">m/s</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="bottom-info-banner">
+              <span>🍃</span>
+              <span>Fresh Air Movement! Wind circulation is helping reduce pollutant.</span>
+            </div>
+          </div>
+
+          {/* Card 3: Carbon Monitoring / Mitigation Offset */}
+          <div className="glass-deck-card">
+            <div className="card-header-row">
+              <span className="deck-card-title">Carbon Monitoring</span>
+              <div style={{ display: 'flex', gap: '8px', fontSize: '10px', fontWeight: '700' }}>
+                <span style={{ color: '#10b981' }}>● Current</span>
+                <span style={{ color: '#f59e0b' }}>● Baseline</span>
+              </div>
+            </div>
+
+            <div style={{ height: '110px', position: 'relative' }}>
+              <Line
+                data={carbonData}
+                options={{
+                  responsive: true,
+                  maintainAspectRatio: false,
+                  plugins: { legend: { display: false } },
+                  scales: {
+                    x: { ticks: { color: '#94a3b8', font: { size: 9 } }, grid: { display: false } },
+                    y: { ticks: { color: '#94a3b8', font: { size: 9 } }, grid: { color: 'rgba(0,0,0,0.03)' } }
                   }
                 }}
-              >
-                <Popup>
-                  <div>
-                    <strong>📍 {cp.name}</strong><br />
-                    AQI: <strong style={{ color: aqiColor(aqiVal) }}>{aqiVal}</strong>
-                  </div>
-                </Popup>
-              </Marker>
-            )
-          })}
+              />
+            </div>
 
-          {/* Emission Sources */}
-          {state.sources && state.sources.map(src => (
-            <CircleMarker
-              key={src.id}
-              center={src.location}
-              radius={6}
-              pathOptions={{
-                fillColor: SOURCE_COLORS[src.category] || '#888',
-                fillOpacity: 0.9,
-                color: '#fff',
-                weight: 1,
-              }}
-            >
-              <Popup>
-                <EmissionSourcePopup src={src} />
-              </Popup>
-            </CircleMarker>
-          ))}
-        </MapContainer>
+            {/* Dark bottom badge offset */}
+            <div className="dark-offset-badge">
+              <div className="offset-label-block">
+                <span style={{ fontSize: '16px' }}>🍃</span>
+                <span className="offset-name">Net Carbon Offset</span>
+              </div>
+              <span className="offset-value">101,850,000 Ton Co2e</span>
+            </div>
+          </div>
+        </div>
       </div>
 
+      {/* Right Details Panel */}
       <div className="right-panel">
         {selectedWard ? (
-          <div className="card" style={{ padding: '20px', background: '#1c2230', borderRadius: '12px', border: '1px solid #2e384e', minHeight: '400px' }}>
+          <div className="card" style={{ padding: '20px', background: '#ffffff', borderRadius: '12px', border: '1px solid var(--border)', minHeight: '400px' }}>
             {/* Header: Location */}
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
-              <span style={{ fontSize: '18px', color: '#38bdf8' }}>📍</span>
-              <span style={{ fontSize: '16px', fontWeight: '700', color: '#f1f5f9' }}>{selectedWard.name}</span>
+              <span style={{ fontSize: '18px', color: '#10b981' }}>📍</span>
+              <span style={{ fontSize: '16px', fontWeight: '800', color: '#0f172a' }}>{selectedWard.name}</span>
             </div>
-            <div style={{ fontSize: '12px', color: '#94a3b8', marginLeft: '24px', marginBottom: '16px' }}>
+            <div style={{ fontSize: '12px', color: '#64748b', marginLeft: '24px', marginBottom: '16px' }}>
               {selectedWard.state ? `${selectedWard.state}, ` : ''}{selectedWard.country || 'India'}
             </div>
 
             {/* Weather row */}
             {selectedWard.weather && selectedWard.weather.loading && (
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px', marginLeft: '24px', fontSize: '12px', color: '#94a3b8' }}>
-                <div className="spinner-mini" style={{ width: '12px', height: '12px', border: '2px solid rgba(56, 189, 248, 0.3)', borderTopColor: '#38bdf8', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+                <div className="spinner-mini" style={{ width: '12px', height: '12px', border: '2px solid rgba(16, 185, 129, 0.3)', borderTopColor: '#10b981', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
                 <span>Fetching local weather...</span>
               </div>
             )}
             {selectedWard.weather && selectedWard.weather.temperature_c !== null && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: '16px', marginBottom: '16px', marginLeft: '24px', fontSize: '13px', color: '#cbd5e1', background: 'rgba(255,255,255,0.03)', padding: '6px 12px', borderRadius: '6px', border: '1px solid rgba(255,255,255,0.05)', width: 'fit-content' }}>
-                <span title="Temperature" style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>🌡️ <strong style={{ color: '#f1f5f9' }}>{selectedWard.weather.temperature_c}°C</strong></span>
-                <span title="Wind Speed" style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>💨 <strong style={{ color: '#f1f5f9' }}>{selectedWard.weather.wind_speed_kmh} km/h</strong></span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '16px', marginBottom: '16px', marginLeft: '24px', fontSize: '13px', color: '#475569', background: '#f8fafc', padding: '6px 12px', borderRadius: '6px', border: '1px solid var(--border)', width: 'fit-content' }}>
+                <span title="Temperature" style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>🌡️ <strong>{selectedWard.weather.temperature_c}°C</strong></span>
+                <span title="Wind Speed" style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>💨 <strong>{selectedWard.weather.wind_speed_kmh} km/h</strong></span>
                 {selectedWard.weather.humidity_pct !== undefined && selectedWard.weather.humidity_pct !== null && (
-                  <span title="Humidity" style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>💧 <strong style={{ color: '#f1f5f9' }}>{selectedWard.weather.humidity_pct}%</strong></span>
+                  <span title="Humidity" style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>💧 <strong>{selectedWard.weather.humidity_pct}%</strong></span>
                 )}
               </div>
             )}
 
             {/* Air Quality Index Label */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', color: '#94a3b8', marginBottom: '16px', borderTop: '1px solid #2e384e', paddingTop: '12px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', color: '#64748b', marginBottom: '16px', borderTop: '1px solid var(--border)', paddingTop: '12px' }}>
               <span>📊</span>
               <span>Air Quality Index (AQI-IN)</span>
             </div>
@@ -796,10 +1021,10 @@ function CommandCenter({ state, selectedWard, onSelectWard, mapStyle, setMapStyl
               const aqiVal = selectedWard.aqi_in ?? selectedWard.current_aqi;
               return (
                 <div style={{ display: 'flex', alignItems: 'center', gap: '16px', marginBottom: '24px' }}>
-                  <span style={{ fontSize: '56px', fontWeight: '800', color: aqiColor(aqiVal), lineHeight: '1' }}>
+                  <span style={{ fontSize: '56px', fontWeight: '850', color: aqiColor(aqiVal), lineHeight: '1' }}>
                     {Math.round(aqiVal)}
                   </span>
-                  <span className={`aqi-badge ${aqiLevel(aqiVal)}`} style={{ fontSize: '14px', padding: '6px 16px', borderRadius: '8px', fontWeight: '700', textTransform: 'capitalize' }}>
+                  <span className={`aqi-badge ${aqiLevel(aqiVal)}`} style={{ fontSize: '14px', padding: '6px 16px', borderRadius: '20px', fontWeight: '700', textTransform: 'capitalize' }}>
                     {aqiLevel(aqiVal).replace('_', ' ')}
                   </span>
                 </div>
@@ -841,24 +1066,65 @@ function CommandCenter({ state, selectedWard, onSelectWard, mapStyle, setMapStyl
               ]
 
               return (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', borderTop: '1px solid #2e384e', paddingTop: '16px' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', borderTop: '1px solid var(--border)', paddingTop: '16px' }}>
                   {pollutantsData.map((p, idx) => {
                     const pct = Math.min(100, (p.value / p.max) * 100)
                     return (
                       <div key={idx} style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '13px' }}>
-                          <span style={{ fontWeight: '600', color: '#94a3b8' }}>{p.label} <span style={{ fontSize: '10px' }}>↗</span></span>
-                          <span style={{ marginLeft: 'auto', fontWeight: '700', color: '#f1f5f9' }}>
-                            {p.value} <span style={{ fontSize: '11px', fontWeight: '400', color: '#94a3b8' }}>{p.unit}</span>
+                          <span style={{ fontWeight: '600', color: '#475569' }}>{p.label} <span style={{ fontSize: '10px' }}>↗</span></span>
+                          <span style={{ marginLeft: 'auto', fontWeight: '700', color: '#0f172a' }}>
+                            {p.value} <span style={{ fontSize: '11px', fontWeight: '400', color: '#64748b' }}>{p.unit}</span>
                           </span>
                         </div>
                         {/* Progress Bar */}
-                        <div style={{ width: '100%', height: '5px', background: '#0f172a', borderRadius: '3px', overflow: 'hidden' }}>
+                        <div style={{ width: '100%', height: '5px', background: '#f1f5f9', borderRadius: '3px', overflow: 'hidden' }}>
                           <div style={{ width: `${pct}%`, height: '100%', backgroundColor: p.color, borderRadius: '3px' }} />
                         </div>
                       </div>
                     )
                   })}
+                </div>
+              )
+            })()}
+
+            {/* Bottom Scale Legend */}
+            <div style={{ marginTop: '24px', borderTop: '1px solid var(--border)', paddingTop: '16px' }}>
+              <div style={{ fontSize: '11px', color: '#64748b', marginBottom: '8px', textAlign: 'center' }}>
+                AQI Scale Legend
+              </div>
+              <div style={{ display: 'flex', width: '100%', height: '8px', borderRadius: '4px', overflow: 'hidden' }}>
+                <div style={{ flex: 1, background: '#22c55e' }} title="Good (0-50)" />
+                <div style={{ flex: 1, background: '#84cc16' }} title="Satisfactory (51-100)" />
+                <div style={{ flex: 2, background: '#eab308' }} title="Moderate (101-200)" />
+                <div style={{ flex: 2, background: '#f97316' }} title="Poor (201-300)" />
+                <div style={{ flex: 2, background: '#ef4444' }} title="Very Poor (301-400)" />
+                <div style={{ flex: 2, background: '#991b1b' }} title="Severe (401-500+)" />
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '9px', color: '#94a3b8', marginTop: '4px' }}>
+                <span>0</span>
+                <span>50</span>
+                <span>100</span>
+                <span>200</span>
+                <span>300</span>
+                <span>400</span>
+                <span>500+</span>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="card" style={{ padding: '30px', background: '#ffffff', borderRadius: '12px', border: '1px solid var(--border)', color: '#64748b', textAlign: 'center', minHeight: '400px', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', gap: '16px' }}>
+            <span style={{ fontSize: '48px' }}>🌍</span>
+            <strong style={{ color: '#0f172a', fontSize: '16px' }}>Global Air Quality Monitor</strong>
+            <p style={{ fontSize: '13px', lineHeight: '1.6', margin: 0 }}>
+              Search for any city or village in the header search bar or select a marker bubble on the map to view real-time pollutants breakdown.
+            </p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+} })}
                 </div>
               )
             })()}
