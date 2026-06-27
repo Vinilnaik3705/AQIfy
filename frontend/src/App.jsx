@@ -1105,7 +1105,11 @@ function ForecastView({ state, forecast, hours, onChangeHours, selectedWard, onS
   const mitigatedPointRadii = mitigatedDataset.map((_, idx) => idx === selectedOffset ? activePointRadius : 0);
   const mitigatedPointHoverRadii = mitigatedDataset.map((_, idx) => idx === selectedOffset ? activePointHoverRadius : 0);
 
-  const snapshot = forecast ? forecast[Math.min(hours - 1, forecast.length - 1)] : null;
+  const snapshot = (selectedOffset === 0) 
+    ? { wards: state.wards.map(w => ({ ward_id: w.id, ward_name: w.name, center: w.center, predicted_aqi: w.aqi_in ?? w.current_aqi, mitigated_aqi: w.aqi_in ?? w.current_aqi, confidence: 1.0 })) }
+    : (forecast && forecast.length > 0)
+      ? forecast[Math.min(selectedOffset - 1, forecast.length - 1)]
+      : null;
 
   // Extract ML metadata — strict ward match only
   const firstEntry = forecast?.[0];
@@ -1134,12 +1138,13 @@ function ForecastView({ state, forecast, hours, onChangeHours, selectedWard, onS
                 w.ward_id.startsWith('bengaluru_') || w.ward_id.startsWith('chennai_') ||
                 w.ward_id.startsWith('hyderabad_') || w.ward_id.startsWith('kolkata_')
               );
-              const forecastAqi = w.predicted_aqi;
+              // Show mitigated AQI on the map if active, fallback to predicted AQI
+              const displayAqi = w.mitigated_aqi !== undefined ? w.mitigated_aqi : w.predicted_aqi;
               return (
               <Marker
                 key={w.ward_id}
                 position={w.center}
-                icon={createAqiIcon(forecastAqi, isWard)}
+                icon={createAqiIcon(displayAqi, isWard)}
                 eventHandlers={{
                   click: () => {
                     const matched = state.wards.find(ward => ward.id === w.ward_id);
@@ -1150,9 +1155,14 @@ function ForecastView({ state, forecast, hours, onChangeHours, selectedWard, onS
                 <Popup>
                   <div>
                     <strong>{w.ward_name}</strong><br />
-                    Predicted AQI: <strong style={{ color: aqiColor(forecastAqi) }}>
-                      {forecastAqi}
+                    Expected AQI: <strong style={{ color: aqiColor(displayAqi) }}>
+                      {displayAqi}
                     </strong><br />
+                    {w.mitigated_aqi !== undefined && w.mitigated_aqi !== w.predicted_aqi && (
+                      <span style={{ fontSize: '11px', color: '#10b981' }}>
+                        (Reduced from {w.predicted_aqi} baseline)<br />
+                      </span>
+                    )}
                     Confidence: {(w.confidence * 100).toFixed(0)}%
                   </div>
                 </Popup>
@@ -1173,24 +1183,24 @@ function ForecastView({ state, forecast, hours, onChangeHours, selectedWard, onS
                   <line x1="8" y1="2" x2="8" y2="6" />
                   <line x1="3" y1="10" x2="21" y2="10" />
                 </svg>
-                Hyperlocal AQI Trend & Forecasting (72h)
+                Air Quality Projections & Future Trends (72h)
               </div>
               <div className="forecast-legend" style={{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
                 <div className="legend-dot-item">
                   <div className="dot" style={{ background: '#ef4444' }} />
-                  <span style={{ fontSize: '11px' }}>ML Forecast</span>
+                  <span style={{ fontSize: '11px' }}>AI Forecast</span>
                 </div>
                 <div className="legend-dot-item">
                   <div className="dot" style={{ background: '#10b981' }} />
-                  <span style={{ fontSize: '11px' }}>Mitigated</span>
+                  <span style={{ fontSize: '11px' }}>With Clean Air Measures</span>
                 </div>
                 <div className="legend-dot-item">
                   <div className="dot" style={{ background: '#f97316', borderRadius: '0', height: '2px', width: '8px' }} />
-                  <span style={{ fontSize: '11px' }}>Open-Meteo</span>
+                  <span style={{ fontSize: '11px' }}>Standard Weather Model</span>
                 </div>
                 <div className="legend-dot-item">
                   <div className="dot" style={{ background: '#64748b', borderRadius: '0', height: '1px', width: '8px' }} />
-                  <span style={{ fontSize: '11px' }}>Persistence</span>
+                  <span style={{ fontSize: '11px' }}>Current Trend</span>
                 </div>
               </div>
             </div>
@@ -1200,7 +1210,7 @@ function ForecastView({ state, forecast, hours, onChangeHours, selectedWard, onS
               <span>📍</span> <span>Selected: <strong>{currentWard?.name || 'All'}</strong></span>
               {modelType !== "default" && (
                 <span style={{ marginLeft: 'auto', fontSize: '11px', background: 'rgba(56, 189, 248, 0.1)', color: '#38bdf8', padding: '1px 6px', borderRadius: '4px' }}>
-                  Model Active: {modelType}
+                  AI System Active
                 </span>
               )}
             </div>
@@ -1210,9 +1220,9 @@ function ForecastView({ state, forecast, hours, onChangeHours, selectedWard, onS
               <div key={idx} style={{ background: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.3)', borderRadius: '12px', padding: '12px', marginBottom: '14px', display: 'flex', gap: '10px', alignItems: 'flex-start' }}>
                 <span style={{ fontSize: '18px' }}>⚠️</span>
                 <div>
-                  <div style={{ fontWeight: '600', color: '#fca5a5', fontSize: '13px' }}>Unexpected AQI Spike Detected!</div>
+                  <div style={{ fontWeight: '600', color: '#fca5a5', fontSize: '13px' }}>Unexpected Pollution Spike Detected!</div>
                   <div style={{ color: '#fca5a5', fontSize: '12px', marginTop: '2px' }}>
-                    Actual AQI is <strong>{anomaly.actual}</strong> (predicted <strong>{anomaly.predicted}</strong>, deviation of <strong>+{anomaly.deviation}</strong>).
+                    Actual pollution level is <strong>{anomaly.actual} AQI</strong> (expected <strong>{anomaly.predicted}</strong>, deviation of <strong>+{anomaly.deviation}</strong>).
                   </div>
                   <div style={{ color: '#cbd5e1', fontSize: '11px', marginTop: '4px' }}>
                     Possible Cause: {anomaly.possible_cause}
@@ -1224,16 +1234,19 @@ function ForecastView({ state, forecast, hours, onChangeHours, selectedWard, onS
             {/* Metrics Inset Box */}
             <div className="forecast-metrics-grid">
               <div className="metric-col">
-                <div className="metric-label">Timeline Index</div>
+                <div className="metric-label" title="Timeline hour offset for prediction">Time Offset</div>
                 <div className="metric-value">{timeLabel}</div>
+                <div style={{ fontSize: '10px', color: '#64748b', marginTop: '2px' }}>Selected hour offset</div>
               </div>
               <div className="metric-col">
-                <div className="metric-label">Baseline AQI</div>
+                <div className="metric-label" title="Expected air pollution index if no actions are taken">Expected AQI (No Action)</div>
                 <div className="metric-value large red">{baselineAqi}</div>
+                <div style={{ fontSize: '10px', color: '#64748b', marginTop: '2px' }}>Without cleanup measures</div>
               </div>
               <div className="metric-col">
-                <div className="metric-label">Mitigated AQI</div>
+                <div className="metric-label" title="Target pollution index when cleanup actions are active">Target AQI (With Measures)</div>
                 <div className="metric-value large green">{mitigatedAqi}</div>
+                <div style={{ fontSize: '10px', color: '#64748b', marginTop: '2px' }}>With active spraying/pauses</div>
               </div>
               <div className="metric-col divider">
                 {/* Wind icon inline */}
@@ -1241,14 +1254,14 @@ function ForecastView({ state, forecast, hours, onChangeHours, selectedWard, onS
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ color: '#94a3b8' }}>
                     <path d="M9.59 4.59A2 2 0 1 1 11 8H2m10.59 11.41A2 2 0 1 0 14 16H2m15.73-8.27A2.5 2.5 0 1 1 19.5 12H2" />
                   </svg>
-                  <span>WS: {windSpeedMs} m/s</span>
+                  <span>Wind Speed: {windSpeedMs} m/s</span>
                 </div>
                 {/* Thermometer / Inversion height icon inline */}
                 <div className="metric-value" style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', color: '#cbd5e1' }}>
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ color: '#94a3b8' }}>
                     <path d="M14 14.76V3.5a2.5 2.5 0 0 0-5 0v11.26a4.5 4.5 0 1 0 5 0z" />
                   </svg>
-                  <span>Inversion: {inversionHeight}m</span>
+                  <span>Ventilation Layer: {inversionHeight}m</span>
                 </div>
               </div>
             </div>
@@ -1392,43 +1405,48 @@ function ForecastView({ state, forecast, hours, onChangeHours, selectedWard, onS
               />
             </div>
 
-            {/* ML Performance Evaluation Card */}
+            {/* ML Performance Evaluation Card wrapped in details */}
             {accuracy && accuracy.training_samples > 0 && (
-              <div style={{ padding: '12px', background: '#080d1a', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.03)' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                  <span style={{ fontSize: '11px', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: '600' }}>ML Forecast Performance (Holdout Evaluation)</span>
-                  <span style={{ fontSize: '11px', background: 'rgba(16, 185, 129, 0.1)', color: '#10b981', padding: '1px 5px', borderRadius: '4px', fontWeight: '500' }}>
-                    Model: Gradient Boosting
-                  </span>
-                </div>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '8px', textAlign: 'center' }}>
-                  <div style={{ background: 'rgba(255,255,255,0.02)', padding: '6px', borderRadius: '6px' }}>
-                    <div style={{ fontSize: '10px', color: '#64748b' }}>ML RMSE</div>
-                    <div style={{ fontSize: '12px', fontWeight: '600', color: '#ef4444', marginTop: '2px' }}>{accuracy.ml_rmse}</div>
+              <details style={{ cursor: 'pointer', outline: 'none', borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: '12px' }}>
+                <summary style={{ fontSize: '11px', color: '#38bdf8', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '8px', userSelect: 'none' }}>
+                  🛠️ Technical Model Diagnostics (For Operators)
+                </summary>
+                <div style={{ padding: '12px', background: '#080d1a', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.03)', marginTop: '4px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                    <span style={{ fontSize: '11px', color: '#94a3b8', fontWeight: '600' }}>ML Forecast Performance (Holdout Evaluation)</span>
+                    <span style={{ fontSize: '11px', background: 'rgba(16, 185, 129, 0.1)', color: '#10b981', padding: '1px 5px', borderRadius: '4px', fontWeight: '500' }}>
+                      Model: Gradient Boosting
+                    </span>
                   </div>
-                  <div style={{ background: 'rgba(255,255,255,0.02)', padding: '6px', borderRadius: '6px' }}>
-                    <div style={{ fontSize: '10px', color: '#64748b' }}>Open-Meteo</div>
-                    <div style={{ fontSize: '12px', fontWeight: '600', color: '#f97316', marginTop: '2px' }}>{accuracy.open_meteo_rmse}</div>
-                  </div>
-                  <div style={{ background: 'rgba(255,255,255,0.02)', padding: '6px', borderRadius: '6px' }}>
-                    <div style={{ fontSize: '10px', color: '#64748b' }}>Persistence</div>
-                    <div style={{ fontSize: '12px', fontWeight: '600', color: '#94a3b8', marginTop: '2px' }}>{accuracy.persistence_rmse}</div>
-                  </div>
-                  <div style={{ background: 'rgba(16, 185, 129, 0.05)', padding: '6px', borderRadius: '6px' }}>
-                    <div style={{ fontSize: '10px', color: '#10b981' }}>Skill Score</div>
-                    <div style={{ fontSize: '12px', fontWeight: '700', color: '#10b981', marginTop: '2px' }}>
-                      {accuracy.skill_score >= 0 ? `+${(accuracy.skill_score * 100).toFixed(0)}%` : `${(accuracy.skill_score * 100).toFixed(0)}%`}
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '8px', textAlign: 'center' }}>
+                    <div style={{ background: 'rgba(255,255,255,0.02)', padding: '6px', borderRadius: '6px' }}>
+                      <div style={{ fontSize: '10px', color: '#64748b' }}>ML RMSE</div>
+                      <div style={{ fontSize: '12px', fontWeight: '600', color: '#ef4444', marginTop: '2px' }}>{accuracy.ml_rmse}</div>
+                    </div>
+                    <div style={{ background: 'rgba(255,255,255,0.02)', padding: '6px', borderRadius: '6px' }}>
+                      <div style={{ fontSize: '10px', color: '#64748b' }}>Open-Meteo</div>
+                      <div style={{ fontSize: '12px', fontWeight: '600', color: '#f97316', marginTop: '2px' }}>{accuracy.open_meteo_rmse}</div>
+                    </div>
+                    <div style={{ background: 'rgba(255,255,255,0.02)', padding: '6px', borderRadius: '6px' }}>
+                      <div style={{ fontSize: '10px', color: '#64748b' }}>Persistence</div>
+                      <div style={{ fontSize: '12px', fontWeight: '600', color: '#94a3b8', marginTop: '2px' }}>{accuracy.persistence_rmse}</div>
+                    </div>
+                    <div style={{ background: 'rgba(16, 185, 129, 0.05)', padding: '6px', borderRadius: '6px' }}>
+                      <div style={{ fontSize: '10px', color: '#10b981' }}>Skill Score</div>
+                      <div style={{ fontSize: '12px', fontWeight: '700', color: '#10b981', marginTop: '2px' }}>
+                        {accuracy.skill_score >= 0 ? `+${(accuracy.skill_score * 100).toFixed(0)}%` : `${(accuracy.skill_score * 100).toFixed(0)}%`}
+                      </div>
                     </div>
                   </div>
+                  <div style={{ fontSize: '10px', color: '#64748b', marginTop: '8px', textAlign: 'center' }}>
+                    {accuracy.skill_score > 0 ? (
+                      <span>✅ ML Forecast beats uncalibrated persistence by <strong>{(accuracy.skill_score * 100).toFixed(0)}%</strong> (trained on {accuracy.training_samples} samples)</span>
+                    ) : (
+                      <span>Persistence baseline is highly persistent (stable weather)</span>
+                    )}
+                  </div>
                 </div>
-                <div style={{ fontSize: '10px', color: '#64748b', marginTop: '8px', textAlign: 'center' }}>
-                  {accuracy.skill_score > 0 ? (
-                    <span>✅ ML Forecast beats uncalibrated persistence by <strong>{(accuracy.skill_score * 100).toFixed(0)}%</strong> (trained on {accuracy.training_samples} samples)</span>
-                  ) : (
-                    <span>Persistence baseline is highly persistent (stable weather)</span>
-                  )}
-                </div>
-              </div>
+              </details>
             )}
 
           </div>
