@@ -728,7 +728,7 @@ function AqiGauge({ aqi }) {
 
 /* ── Custom Animated Wind Stream Layer ───────────────────────────────────── */
 
-function WindStreamAnimation() {
+function WindStreamAnimation({ lat, lng }) {
   const map = useMap();
   const canvasRef = useRef(null);
   const [windAngle, setWindAngle] = useState(-Math.PI / 5); // default SW to NE
@@ -737,8 +737,9 @@ function WindStreamAnimation() {
   // Fetch real wind direction dynamically using hourly Open-Meteo endpoint
   useEffect(() => {
     async function fetchWindDirection() {
+      if (!lat || !lng) return;
       try {
-        const res = await fetch('https://api.open-meteo.com/v1/forecast?latitude=17.3850&longitude=78.4867&hourly=windspeed_10m,winddirection_10m');
+        const res = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lng}&hourly=windspeed_10m,winddirection_10m`);
         if (res.ok) {
           const data = await res.json();
           if (data.hourly && data.hourly.winddirection_10m && data.hourly.winddirection_10m.length > 0) {
@@ -753,7 +754,7 @@ function WindStreamAnimation() {
             const calculatedSpeed = Math.min(3.5, Math.max(0.8, speed / 8));
             setWindSpeed(calculatedSpeed);
             
-            console.log(`Open-Meteo Wind API success: direction=${dir}deg, speed=${speed}km/h -> flowAngle=${angleRad.toFixed(2)}rad, particleSpeed=${calculatedSpeed.toFixed(2)}`);
+            console.log(`Open-Meteo Wind API success at lat=${lat}, lng=${lng}: direction=${dir}deg, speed=${speed}km/h -> flowAngle=${angleRad.toFixed(2)}rad, particleSpeed=${calculatedSpeed.toFixed(2)}`);
           }
         }
       } catch (e) {
@@ -761,7 +762,7 @@ function WindStreamAnimation() {
       }
     }
     fetchWindDirection();
-  }, []);
+  }, [lat, lng]);
 
   useEffect(() => {
     const container = map.getContainer();
@@ -1126,7 +1127,12 @@ function CommandCenter({ state, selectedWard, onSelectWard, mapStyle, setMapStyl
             )}
 
             {/* Custom Wind Particle Animation Overlay */}
-            {showWind && <WindStreamAnimation />}
+            {showWind && (
+              <WindStreamAnimation
+                lat={selectedWard?.center?.[0] ?? targetCenter?.[0] ?? state?.city?.center?.[0] ?? 17.3850}
+                lng={selectedWard?.center?.[1] ?? targetCenter?.[1] ?? state?.city?.center?.[1] ?? 78.4867}
+              />
+            )}
 
             {/* Registered Emission Sources (Toggled by Factories, Vehicular, Construction) */}
             {state.sources && state.sources.map(src => {
