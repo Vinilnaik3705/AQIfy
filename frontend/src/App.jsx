@@ -256,10 +256,6 @@ export default function App() {
       setSelectedWard(null)
       return
     }
-    // Update target coordinates so the map centers on the selected city/ward
-    setTargetCenter(ward.center)
-    setTargetZoom(prev => Math.max(prev, 6))
-
     // Set basic info first so the UI responds instantly
     setSelectedWard({
       ...ward,
@@ -326,8 +322,6 @@ export default function App() {
             customPlaces={customPlaces}
             targetCenter={targetCenter}
             targetZoom={targetZoom}
-            setTargetCenter={setTargetCenter}
-            setTargetZoom={setTargetZoom}
             setTab={setTab}
             onSelectPlace={handleSelectPlace}
             forceMaximized={true}
@@ -906,28 +900,9 @@ function WindStreamAnimation() {
   return null;
 }
 
-/* ── Map State Listener Helper ───────────────────────────────────────────── */
-
-function MapStateListener({ setTargetCenter, setTargetZoom }) {
-  const map = useMap();
-  useEffect(() => {
-    const onMoveEnd = () => {
-      const center = map.getCenter();
-      // Only update if map center actually changed to avoid loop
-      setTargetCenter([center.lat, center.lng]);
-      setTargetZoom(map.getZoom());
-    };
-    map.on('moveend', onMoveEnd);
-    return () => {
-      map.off('moveend', onMoveEnd);
-    };
-  }, [map, setTargetCenter, setTargetZoom]);
-  return null;
-}
-
 /* ── Command Center ────────────────────────────────────────────────────── */
 
-function CommandCenter({ state, selectedWard, onSelectWard, mapStyle, setMapStyle, customPlaces, targetCenter, targetZoom, setTargetCenter, setTargetZoom, setTab, onSelectPlace, forceMaximized = false }) {
+function CommandCenter({ state, selectedWard, onSelectWard, mapStyle, setMapStyle, customPlaces, targetCenter, targetZoom, setTab, onSelectPlace, forceMaximized = false }) {
   const [query, setQuery] = useState('')
   const [results, setResults] = useState([])
   const [showDropdown, setShowDropdown] = useState(false)
@@ -1117,7 +1092,6 @@ function CommandCenter({ state, selectedWard, onSelectWard, mapStyle, setMapStyl
             zoomControl={false}
           >
             <ChangeMapView center={targetCenter} zoom={targetZoom} />
-            <MapStateListener setTargetCenter={setTargetCenter} setTargetZoom={setTargetZoom} />
             
             {/* Dark Matter Basemap */}
             <TileLayer
