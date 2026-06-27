@@ -482,66 +482,44 @@ function HeaderSearch({ onSelectPlace }) {
 /* ── Header ────────────────────────────────────────────────────────────── */
 
 function Header({ tab, setTab, cityAqi, alertCount, weather, onSelectPlace }) {
-  const navItems = [
-    { id: 'command', label: 'Air Quality Data' },
-    { id: 'enforcement', label: 'Learn' },
-    { id: 'attribution', label: 'News' },
-    { id: 'forecast', label: 'Impact' },
-    { id: 'analytics', label: 'Support' },
-  ]
-
   return (
-    <header className="header">
-      <div className="brand-section">
-        <div className="brand-logo-red">+</div>
-        IQAir
+    <header className="header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 24px', background: '#ffffff', borderBottom: '1px solid var(--border)' }}>
+      {/* Brand Logo and Title */}
+      <div 
+        className="brand-section" 
+        onClick={() => setTab('command')} 
+        style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px', fontWeight: '800', fontSize: '18px', color: '#0f172a' }}
+      >
+        <div className="brand-logo-red" style={{ width: '24px', height: '24px', borderRadius: '4px', background: '#ef4444', color: '#ffffff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: '900', fontSize: '16px' }}>+</div>
+        <span>IQAir</span>
       </div>
 
-      <div className="header-nav-pills">
-        {navItems.map(item => (
-          <button
-            key={item.id}
-            className={`nav-pill ${tab === item.id ? 'active' : ''}`}
-            onClick={() => setTab(item.id)}
-          >
-            {item.label}
-          </button>
-        ))}
-        <button className="nav-pill">Shop</button>
-      </div>
+      {/* Header Right containing Search Bar and EnforceHub Button */}
+      <div className="header-right" style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+        {/* Search Input Box */}
+        <HeaderSearch onSelectPlace={onSelectPlace} />
 
-      <div className="header-right">
-        {/* Search icon */}
-        <button className="header-icon" title="Search" style={{ background: 'none', border: 'none' }}>
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-            <circle cx="11" cy="11" r="8"></circle>
-            <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
-          </svg>
-        </button>
-
-        {/* US Flag Dropdown */}
-        <div className="flag-select">
-          <span style={{ fontSize: '20px' }}>🇺🇸</span>
-          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" style={{ marginLeft: '2px', color: '#475569' }}>
-            <polyline points="6 9 12 15 18 9"></polyline>
-          </svg>
-        </div>
-
-        {/* User Account Icon */}
-        <button className="header-icon" title="User Profile" style={{ background: 'none', border: 'none' }}>
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
-            <circle cx="12" cy="7" r="4"></circle>
-          </svg>
-        </button>
-
-        {/* Shopping Cart Icon */}
-        <button className="header-icon" title="Shopping Cart" style={{ background: 'none', border: 'none' }}>
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <circle cx="9" cy="21" r="1"></circle>
-            <circle cx="20" cy="21" r="1"></circle>
-            <path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"></path>
-          </svg>
+        {/* EnforceHub Button */}
+        <button
+          onClick={() => setTab(tab === 'enforcement' ? 'command' : 'enforcement')}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+            padding: '6px 14px',
+            background: tab === 'enforcement' ? '#ef4444' : '#3b82f6',
+            color: '#ffffff',
+            border: 'none',
+            borderRadius: '20px',
+            cursor: 'pointer',
+            fontWeight: '700',
+            fontSize: '12px',
+            boxShadow: '0 2px 6px rgba(59, 130, 246, 0.2)',
+            transition: 'all 0.2s ease-in-out'
+          }}
+        >
+          <Shield size={14} />
+          <span>EnforceHub</span>
         </button>
       </div>
     </header>
@@ -689,6 +667,106 @@ function AqiGauge({ aqi }) {
   );
 }
 
+/* ── Custom Animated Wind Stream Layer ───────────────────────────────────── */
+
+function WindStreamAnimation() {
+  const map = useMap();
+  const canvasRef = useRef(null);
+
+  useEffect(() => {
+    const container = map.getContainer();
+    const canvas = document.createElement('canvas');
+    canvas.style.position = 'absolute';
+    canvas.style.top = '0';
+    canvas.style.left = '0';
+    canvas.style.width = '100%';
+    canvas.style.height = '100%';
+    canvas.style.pointerEvents = 'none';
+    canvas.style.zIndex = '500';
+    container.appendChild(canvas);
+    canvasRef.current = canvas;
+
+    let animationFrameId;
+    const ctx = canvas.getContext('2d');
+
+    // Dense set of animated flow stream particles
+    const particles = [];
+    const particleCount = 140;
+
+    const resizeCanvas = () => {
+      canvas.width = container.clientWidth;
+      canvas.height = container.clientHeight;
+    };
+    resizeCanvas();
+    map.on('resize', resizeCanvas);
+
+    // Initialize particles moving from South-West to North-East
+    for (let i = 0; i < particleCount; i++) {
+      particles.push({
+        x: Math.random() * canvas.width,
+        y: Math.random() * canvas.height,
+        length: 20 + Math.random() * 30,
+        speed: 1.2 + Math.random() * 1.8,
+        opacity: 0.12 + Math.random() * 0.35,
+        angle: -Math.PI / 5 // flow direction (approx -36 degrees, Sw -> NE)
+      });
+    }
+
+    const draw = () => {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.lineWidth = 1.0;
+      ctx.lineCap = 'round';
+
+      particles.forEach(p => {
+        ctx.beginPath();
+        ctx.strokeStyle = `rgba(248, 250, 252, ${p.opacity})`;
+        
+        // Draw path line
+        const targetX = p.x + Math.cos(p.angle) * p.length;
+        const targetY = p.y + Math.sin(p.angle) * p.length;
+        
+        ctx.moveTo(p.x, p.y);
+        ctx.lineTo(targetX, targetY);
+        ctx.stroke();
+
+        // Move particle along the trajectory
+        p.x += Math.cos(p.angle) * p.speed;
+        p.y += Math.sin(p.angle) * p.speed;
+
+        // Reset particle if it leaves canvas borders
+        if (p.x > canvas.width || p.y > canvas.height || p.x < -p.length || p.y < -p.length) {
+          if (Math.random() > 0.5) {
+            p.x = -p.length;
+            p.y = Math.random() * canvas.height;
+          } else {
+            p.x = Math.random() * canvas.width;
+            p.y = -p.length;
+          }
+        }
+      });
+
+      animationFrameId = requestAnimationFrame(draw);
+    };
+    draw();
+
+    const onMove = () => {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+    };
+    map.on('movestart', onMove);
+
+    return () => {
+      cancelAnimationFrame(animationFrameId);
+      map.off('resize', resizeCanvas);
+      map.off('movestart', onMove);
+      if (canvas.parentNode) {
+        canvas.parentNode.removeChild(canvas);
+      }
+    };
+  }, [map]);
+
+  return null;
+}
+
 /* ── Command Center ────────────────────────────────────────────────────── */
 
 function CommandCenter({ state, selectedWard, onSelectWard, mapStyle, setMapStyle, customPlaces, targetCenter, targetZoom, setTab, onSelectPlace, forceMaximized = false }) {
@@ -704,8 +782,22 @@ function CommandCenter({ state, selectedWard, onSelectWard, mapStyle, setMapStyl
   const [showStations, setShowStations] = useState(true)
   const [showFires, setShowFires] = useState(false)
   const [showWind, setShowWind] = useState(true)
-  const [showFacilities, setShowFacilities] = useState(false)
-  const [showIndoor, setShowIndoor] = useState(false)
+  const [showFactories, setShowFactories] = useState(true)
+  const [showVehicular, setShowVehicular] = useState(true)
+  const [showConstruction, setShowConstruction] = useState(true)
+
+  const SOURCE_COLORS = {
+    industrial:    '#ef4444',
+    vehicular:     '#3b82f6',
+    construction:  '#f59e0b',
+    waste_burning: '#10b981',
+  }
+  const SOURCE_ICONS = {
+    industrial:    '🏭',
+    vehicular:     '🚗',
+    construction:  '🏗️',
+    waste_burning: '🔥'
+  }
 
   useEffect(() => {
     function handleClickOutside(event) {
@@ -943,25 +1035,41 @@ function CommandCenter({ state, selectedWard, onSelectWard, mapStyle, setMapStyl
               />
             )}
 
-            {/* Simulated Wind Stream Polyline Overlay */}
-            {showWind && (
-              <Polyline
-                positions={[
-                  [[17.3, 78.4], [17.8, 79.1]],
-                  [[17.5, 78.2], [18.0, 78.9]],
-                  [[12.9, 77.5], [13.4, 78.1]],
-                  [[28.6, 77.2], [29.1, 77.8]],
-                  [[13.0, 80.2], [13.5, 80.8]],
-                  [[19.0, 72.8], [19.5, 73.4]]
-                ]}
-                pathOptions={{
-                  color: '#ffffff',
-                  weight: 1.5,
-                  dashArray: '8, 12',
-                  opacity: 0.6
-                }}
-              />
-            )}
+            {/* Custom Wind Particle Animation Overlay */}
+            {showWind && <WindStreamAnimation />}
+
+            {/* Registered Emission Sources (Toggled by Factories, Vehicular, Construction) */}
+            {state.sources && state.sources.map(src => {
+              const visible = 
+                (src.category === 'industrial' && showFactories) ||
+                (src.category === 'vehicular' && showVehicular) ||
+                (src.category === 'construction' && showConstruction);
+              
+              if (!visible) return null;
+
+              return (
+                <CircleMarker
+                  key={`source-cc-${src.id}`}
+                  center={src.location}
+                  radius={8}
+                  pathOptions={{
+                    fillColor: SOURCE_COLORS[src.category] || '#64748b',
+                    fillOpacity: 0.8,
+                    color: '#ffffff',
+                    weight: 1.5
+                  }}
+                >
+                  <Popup>
+                    <div style={{ color: '#0f172a', fontSize: '12px' }}>
+                      <strong style={{ fontSize: '13px' }}>{SOURCE_ICONS[src.category] || '📍'} {src.name}</strong><br />
+                      Category: <span style={{ textTransform: 'capitalize', fontWeight: '600' }}>{src.label || src.category}</span><br />
+                      Emission Rate: <strong>{src.emission_rate_Q} g/s</strong>
+                    </div>
+                  </Popup>
+                </CircleMarker>
+              );
+            })}
+
             <ZoomControl position="bottomright" />
           </MapContainer>
 
@@ -1102,11 +1210,11 @@ function CommandCenter({ state, selectedWard, onSelectWard, mapStyle, setMapStyl
               {showWind && <span style={{ color: '#3b82f6', fontWeight: '700', fontSize: '13px' }}>✓</span>}
             </button>
 
-            <span style={{ fontSize: '10px', fontWeight: '800', color: '#475569', textTransform: 'uppercase', letterSpacing: '0.5px', marginTop: '6px', marginBottom: '2px', paddingLeft: '4px' }}>Indoor</span>
+            <span style={{ fontSize: '10px', fontWeight: '800', color: '#475569', textTransform: 'uppercase', letterSpacing: '0.5px', marginTop: '6px', marginBottom: '2px', paddingLeft: '4px' }}>Emission Sources</span>
 
-            {/* Clean Air Facilities Pill */}
+            {/* Factories Pill */}
             <button 
-              onClick={() => setShowFacilities(!showFacilities)}
+              onClick={() => setShowFactories(!showFactories)}
               style={{
                 display: 'flex',
                 alignItems: 'center',
@@ -1130,23 +1238,23 @@ function CommandCenter({ state, selectedWard, onSelectWard, mapStyle, setMapStyl
                   width: '28px',
                   height: '28px',
                   borderRadius: '50%',
-                  background: showFacilities ? '#3b82f6' : '#f1f5f9',
-                  color: showFacilities ? '#ffffff' : '#64748b',
+                  background: showFactories ? '#3b82f6' : '#f1f5f9',
+                  color: showFactories ? '#ffffff' : '#64748b',
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
                   fontSize: '13px'
                 }}>
-                  🏢
+                  🏭
                 </div>
-                <span>Clean Air Facilities</span>
+                <span>Factories</span>
               </div>
-              {showFacilities && <span style={{ color: '#3b82f6', fontWeight: '700', fontSize: '13px' }}>✓</span>}
+              {showFactories && <span style={{ color: '#3b82f6', fontWeight: '700', fontSize: '13px' }}>✓</span>}
             </button>
 
-            {/* Indoor Sensors Pill */}
+            {/* Vehicular Traffic Pill */}
             <button 
-              onClick={() => setShowIndoor(!showIndoor)}
+              onClick={() => setShowVehicular(!showVehicular)}
               style={{
                 display: 'flex',
                 alignItems: 'center',
@@ -1170,18 +1278,58 @@ function CommandCenter({ state, selectedWard, onSelectWard, mapStyle, setMapStyl
                   width: '28px',
                   height: '28px',
                   borderRadius: '50%',
-                  background: showIndoor ? '#3b82f6' : '#f1f5f9',
-                  color: showIndoor ? '#ffffff' : '#64748b',
+                  background: showVehicular ? '#3b82f6' : '#f1f5f9',
+                  color: showVehicular ? '#ffffff' : '#64748b',
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
                   fontSize: '13px'
                 }}>
-                  🏠
+                  🚗
                 </div>
-                <span>Indoor Sensors</span>
+                <span>Vehicular Traffic</span>
               </div>
-              {showIndoor && <span style={{ color: '#3b82f6', fontWeight: '700', fontSize: '13px' }}>✓</span>}
+              {showVehicular && <span style={{ color: '#3b82f6', fontWeight: '700', fontSize: '13px' }}>✓</span>}
+            </button>
+
+            {/* Construction Sites Pill */}
+            <button 
+              onClick={() => setShowConstruction(!showConstruction)}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '10px',
+                padding: '6px 14px 6px 6px',
+                background: '#ffffff',
+                border: '1px solid #e2e8f0',
+                borderRadius: '24px',
+                cursor: 'pointer',
+                boxShadow: '0 2px 6px rgba(0,0,0,0.05)',
+                fontWeight: '600',
+                fontSize: '12px',
+                color: '#1e293b',
+                width: '185px',
+                justifyContent: 'space-between',
+                transition: 'all 0.15s ease'
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <div style={{
+                  width: '28px',
+                  height: '28px',
+                  borderRadius: '50%',
+                  background: showConstruction ? '#3b82f6' : '#f1f5f9',
+                  color: showConstruction ? '#ffffff' : '#64748b',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  fontSize: '13px'
+                }}>
+                  🏗️
+                </div>
+                <span>Construction Sites</span>
+              </div>
+              {showConstruction && <span style={{ color: '#3b82f6', fontWeight: '700', fontSize: '13px' }}>✓</span>}
             </button>
           </div>
         </div>
