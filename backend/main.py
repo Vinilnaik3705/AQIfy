@@ -546,14 +546,16 @@ async def subscribe_advisory(
     profile: str = Query(default="healthy_adult"),
     channel: str = Query(default="none"),
     lang: str = Query(default="en"),
+    phone: str = Query(default=""),
 ):
     """Register a public health advisory alert subscription."""
-    sub_key = f"{ward_id}_{profile}"
+    sub_key = f"{ward_id}_{profile}_{channel}_{phone}"
     ACTIVE_SUBSCRIPTIONS[sub_key] = {
         "ward_id": ward_id,
         "profile": profile,
         "channel": channel,
         "lang": lang,
+        "phone": phone,
         "subscribed_at": datetime.now(timezone.utc).isoformat()
     }
     print(f"Registered subscription: {ACTIVE_SUBSCRIPTIONS[sub_key]}")

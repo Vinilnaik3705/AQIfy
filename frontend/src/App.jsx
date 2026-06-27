@@ -176,6 +176,7 @@ export default function App() {
   const [advLang, setAdvLang] = useState('en')
   const [advProfile, setAdvProfile] = useState('healthy_adult')
   const [isAdvisoryOpen, setIsAdvisoryOpen] = useState(false)
+  const [isAlertSubscriptionOpen, setIsAlertSubscriptionOpen] = useState(false)
 
   // ── Data Fetching ────────────────────────────────────────────────────
 
@@ -375,6 +376,18 @@ export default function App() {
         onSelectWard={(w) => { handleSelectWard(w); loadAdvisory(w.id, advLang, advProfile) }}
         isOpen={isAdvisoryOpen}
         onToggle={() => setIsAdvisoryOpen(!isAdvisoryOpen)}
+        onLoadAdvisory={loadAdvisory}
+      />
+
+      {/* ── Personal Alert Subscription Floating Widget ─────────────── */}
+      <PersonalAlertSubscriptionPopup
+        state={state}
+        profile={advProfile}
+        onChangeProfile={setAdvProfile}
+        selectedWard={selectedWard}
+        lang={advLang}
+        isOpen={isAlertSubscriptionOpen}
+        onToggle={() => setIsAlertSubscriptionOpen(!isAlertSubscriptionOpen)}
         onLoadAdvisory={loadAdvisory}
       />
 
@@ -2848,19 +2861,8 @@ function CitizensAdvisoryPopup({
   onToggle, 
   onLoadAdvisory 
 }) {
-  const [personalProfile, setPersonalProfile] = useState(profile || 'healthy_adult')
-  const [alertChannel, setAlertChannel] = useState('none')
-  const [phoneNumber, setPhoneNumber] = useState('')
-  const [subscriptionActive, setSubscriptionActive] = useState(false)
-  const [subscribing, setSubscribing] = useState(false)
   const [nearbyPlaces, setNearbyPlaces] = useState(null)
   const [nearbyLoading, setNearbyLoading] = useState(false)
-
-  useEffect(() => {
-    if (profile) {
-      setPersonalProfile(profile);
-    }
-  }, [profile])
 
   // Fetch nearby hospitals & pharmacies when ward changes and popup is open
   useEffect(() => {
@@ -2890,26 +2892,6 @@ function CitizensAdvisoryPopup({
   }, [isOpen, selectedWard])
 
   if (!state) return null
-
-  const handleSubscribe = async () => {
-    if (!selectedWard) return;
-    setSubscribing(true);
-    try {
-      const response = await fetch(`/api/advisory/subscribe?ward_id=${selectedWard.id}&profile=${personalProfile}&channel=${alertChannel}&lang=${lang}`, {
-        method: 'POST'
-      });
-      const data = await response.json();
-      if (data.status === 'success') {
-        setSubscriptionActive(true);
-        onChangeProfile(personalProfile);
-        await onLoadAdvisory(selectedWard.id, lang, personalProfile);
-      }
-    } catch (err) {
-      console.error("Subscription failed:", err);
-    } finally {
-      setSubscribing(false);
-    }
-  }
 
   const getAqiColor = (aqi) => {
     if (aqi <= 50) return '#22c55e'
@@ -2949,7 +2931,7 @@ function CitizensAdvisoryPopup({
           <div className="advisory-popup-header">
             <div>
               <div className="advisory-popup-title">
-                <Users size={16} color="#10b981" />
+                <Users size={18} color="#10b981" />
                 <span>Health Advisory Portal</span>
               </div>
               <div className="advisory-popup-subtitle">
@@ -2960,14 +2942,14 @@ function CitizensAdvisoryPopup({
           </div>
 
           <div style={{ padding: '12px 16px', background: '#f8fafc', borderBottom: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span style={{ fontSize: '11px', fontWeight: 'bold', color: '#64748b', textTransform: 'uppercase' }}>Select Language</span>
+            <span style={{ fontSize: '13px', fontWeight: 'bold', color: '#64748b', textTransform: 'uppercase' }}>Select Language</span>
             <select 
               value={lang} 
               onChange={(e) => {
                 onChangeLang(e.target.value);
-                if (selectedWard) onLoadAdvisory(selectedWard.id, e.target.value, personalProfile);
+                if (selectedWard) onLoadAdvisory(selectedWard.id, e.target.value, profile);
               }}
-              style={{ fontSize: '11px', padding: '2px 6px', borderRadius: '4px', border: '1px solid #cbd5e1', background: '#ffffff', cursor: 'pointer' }}
+              style={{ fontSize: '13px', padding: '2px 6px', borderRadius: '4px', border: '1px solid #cbd5e1', background: '#ffffff', cursor: 'pointer' }}
             >
               <option value="en">English</option>
               <option value="hi">Hindi</option>
@@ -2983,12 +2965,12 @@ function CitizensAdvisoryPopup({
               
               {/* AQI Numerical Scale & Multi-color Scale */}
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '4px' }}>
-                <span style={{ fontSize: '12px', fontWeight: '600', color: '#64748b' }}>{advisory.ward_name}</span>
-                <span style={{ fontSize: '24px', fontWeight: '800', color: getAqiColor(advisory.aqi) }}>
+                <span style={{ fontSize: '14px', fontWeight: '600', color: '#64748b' }}>{advisory.ward_name}</span>
+                <span style={{ fontSize: '26px', fontWeight: '800', color: getAqiColor(advisory.aqi) }}>
                   AQI {Math.round(advisory.aqi)}
                 </span>
               </div>
-              <span className={`aqi-badge ${advisory.level}`} style={{ fontSize: '10px', padding: '2px 8px', borderRadius: '4px', display: 'inline-block', fontWeight: 'bold', textTransform: 'uppercase', marginBottom: '8px' }}>
+              <span className={`aqi-badge ${advisory.level}`} style={{ fontSize: '12px', padding: '2px 8px', borderRadius: '4px', display: 'inline-block', fontWeight: 'bold', textTransform: 'uppercase', marginBottom: '8px' }}>
                 {advisory.level.replace('_', ' ')}
               </span>
 
@@ -3007,7 +2989,7 @@ function CitizensAdvisoryPopup({
                   transition: 'left 0.3s ease-out'
                 }} />
               </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '8px', color: '#94a3b8', marginBottom: '14px', padding: '0 2px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '9px', color: '#94a3b8', marginBottom: '14px', padding: '0 2px' }}>
                 <span>0</span>
                 <span>50</span>
                 <span>100</span>
@@ -3018,7 +3000,7 @@ function CitizensAdvisoryPopup({
               </div>
 
               {/* Main Advisory text */}
-              <div className="advisory-text" style={{ fontSize: '13px', margin: '12px 0', lineHeight: '1.5', color: '#334155' }}>
+              <div className="advisory-text" style={{ fontSize: '15px', margin: '12px 0', lineHeight: '1.5', color: '#334155' }}>
                 {advisory.advisory}
               </div>
               
@@ -3029,15 +3011,15 @@ function CitizensAdvisoryPopup({
                   padding: '10px 12px', 
                   background: '#f1f5f9', 
                   borderRadius: '6px', 
-                  fontSize: '11px', 
+                  fontSize: '13px', 
                   borderLeft: `3px solid ${getAqiColor(advisory.aqi)}`,
                   color: '#475569',
                   lineHeight: '1.4',
                   border: '1px solid #e2e8f0',
                   borderLeftWidth: '3px'
                 }}>
-                  <strong style={{ color: '#0f172a', display: 'flex', alignItems: 'center', gap: '4px', marginBottom: '2px' }}>
-                    <Search size={12} color="#3b82f6" /> Driver Analysis
+                  <strong style={{ color: '#0f172a', display: 'flex', alignItems: 'center', gap: '4px', marginBottom: '2px', fontSize: '14px' }}>
+                    <Search size={14} color="#3b82f6" /> Driver Analysis
                   </strong>
                   {advisory.reason}
                 </div>
@@ -3045,29 +3027,29 @@ function CitizensAdvisoryPopup({
 
               {/* Precautions Grid of 3 Cards */}
               <div style={{ marginTop: '16px' }}>
-                <div style={{ fontSize: '11px', fontWeight: 'bold', color: '#64748b', textTransform: 'uppercase', marginBottom: '8px', letterSpacing: '0.5px' }}>Recommended Precautions</div>
+                <div style={{ fontSize: '13px', fontWeight: 'bold', color: '#64748b', textTransform: 'uppercase', marginBottom: '8px', letterSpacing: '0.5px' }}>Recommended Precautions</div>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '8px' }}>
                   {/* Card 1: N95 Mask */}
                   <div style={{ padding: '8px', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '8px', display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center' }}>
                     <Shield size={18} color="#3b82f6" style={{ marginBottom: '4px' }} />
-                    <span style={{ fontSize: '10px', fontWeight: 'bold', color: '#0f172a' }}>N95 Mask</span>
-                    <span style={{ fontSize: '9px', color: '#64748b', marginTop: '4px', lineHeight: '1.2' }}>
+                    <span style={{ fontSize: '12px', fontWeight: 'bold', color: '#0f172a' }}>N95 Mask</span>
+                    <span style={{ fontSize: '11px', color: '#64748b', marginTop: '4px', lineHeight: '1.2' }}>
                       {advisory.precautions && advisory.precautions[0] ? advisory.precautions[0] : 'Not required'}
                     </span>
                   </div>
                   {/* Card 2: Close Windows */}
                   <div style={{ padding: '8px', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '8px', display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center' }}>
                     <Wind size={18} color="#10b981" style={{ marginBottom: '4px' }} />
-                    <span style={{ fontSize: '10px', fontWeight: 'bold', color: '#0f172a' }}>Close Windows</span>
-                    <span style={{ fontSize: '9px', color: '#64748b', marginTop: '4px', lineHeight: '1.2' }}>
+                    <span style={{ fontSize: '12px', fontWeight: 'bold', color: '#0f172a' }}>Close Windows</span>
+                    <span style={{ fontSize: '11px', color: '#64748b', marginTop: '4px', lineHeight: '1.2' }}>
                       {advisory.precautions && advisory.precautions[1] ? advisory.precautions[1] : 'Windows open'}
                     </span>
                   </div>
                   {/* Card 3: Avoid Exertion */}
                   <div style={{ padding: '8px', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '8px', display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center' }}>
                     <AlertTriangle size={18} color="#f59e0b" style={{ marginBottom: '4px' }} />
-                    <span style={{ fontSize: '10px', fontWeight: 'bold', color: '#0f172a' }}>Avoid Exertion</span>
-                    <span style={{ fontSize: '9px', color: '#64748b', marginTop: '4px', lineHeight: '1.2' }}>
+                    <span style={{ fontSize: '12px', fontWeight: 'bold', color: '#0f172a' }}>Avoid Exertion</span>
+                    <span style={{ fontSize: '11px', color: '#64748b', marginTop: '4px', lineHeight: '1.2' }}>
                       {advisory.precautions && advisory.precautions[2] ? advisory.precautions[2] : 'Safe outdoors'}
                     </span>
                   </div>
@@ -3086,7 +3068,7 @@ function CitizensAdvisoryPopup({
                   alignItems: 'center',
                   gap: '8px',
                   color: '#15803d',
-                  fontSize: '11px',
+                  fontSize: '13px',
                   lineHeight: '1.4'
                 }}>
                   <Heart size={14} color="#16a34a" style={{ flexShrink: 0 }} />
@@ -3098,191 +3080,69 @@ function CitizensAdvisoryPopup({
               {advisory.vulnerable_info && (
                 <div style={{ marginTop: 16, borderTop: '1px solid var(--border)', paddingTop: 10 }}>
                   <div className="chip-row" style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                    <div className="chip" style={{ fontSize: 10, padding: '2px 6px', display: 'flex', alignItems: 'center', gap: '4px', background: '#ffffff', border: '1px solid #e2e8f0' }}>
-                      <Building2 size={11} color="#3b82f6" />
+                    <div className="chip" style={{ fontSize: 12, padding: '2px 6px', display: 'flex', alignItems: 'center', gap: '4px', background: '#ffffff', border: '1px solid #e2e8f0' }}>
+                      <Building2 size={13} color="#3b82f6" />
                       <span>{advisory.vulnerable_info.hospitals} Hosp.</span>
                     </div>
-                    <div className="chip" style={{ fontSize: 10, padding: '2px 6px', display: 'flex', alignItems: 'center', gap: '4px', background: '#ffffff', border: '1px solid #e2e8f0' }}>
-                      <Building2 size={11} color="#f59e0b" />
+                    <div className="chip" style={{ fontSize: 12, padding: '2px 6px', display: 'flex', alignItems: 'center', gap: '4px', background: '#ffffff', border: '1px solid #e2e8f0' }}>
+                      <Building2 size={13} color="#f59e0b" />
                       <span>{advisory.vulnerable_info.schools} Schools</span>
                     </div>
-                    <div className="chip" style={{ fontSize: 10, padding: '2px 6px', display: 'flex', alignItems: 'center', gap: '4px', background: '#ffffff', border: '1px solid #e2e8f0' }}>
-                      <Users size={11} color="#10b981" />
+                    <div className="chip" style={{ fontSize: 12, padding: '2px 6px', display: 'flex', alignItems: 'center', gap: '4px', background: '#ffffff', border: '1px solid #e2e8f0' }}>
+                      <Users size={13} color="#10b981" />
                       <span>{advisory.vulnerable_info.elderly_pct}% Elderly</span>
                     </div>
                   </div>
                 </div>
               )}
 
-              {/* Personal Alert Subscription Panel */}
-              <div style={{ marginTop: 14, borderTop: '1px solid var(--border)', paddingTop: 12 }}>
-                <div style={{ fontSize: 12, fontWeight: '750', color: '#0f172a', marginBottom: 8, display: 'flex', alignItems: 'center', gap: '6px' }}>
-                  <Bell size={13} color="#10b981" />
-                  <span>Personal Alert Subscription</span>
-                </div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                  <div style={{ display: 'flex', gap: '8px' }}>
-                    <div style={{ flex: 1 }}>
-                      <label style={{ fontSize: 10, color: 'var(--text-muted)', display: 'block', marginBottom: 2 }}>Profile</label>
-                      <select
-                        className="select-field"
-                        style={{ width: '100%', padding: '4px 6px', fontSize: 12 }}
-                        value={personalProfile}
-                        onChange={e => {
-                          setPersonalProfile(e.target.value);
-                          setSubscriptionActive(false);
-                        }}
-                      >
-                        <option value="healthy_adult">Healthy Adult</option>
-                        <option value="sensitive">Child / Sensitive Group</option>
-                        <option value="elderly">Elderly (60+)</option>
-                        <option value="outdoor_worker">Outdoor Worker</option>
-                        <option value="asthma">Respiratory / Asthma Condition</option>
-                      </select>
-                    </div>
-                    <div style={{ flex: 1 }}>
-                      <label style={{ fontSize: 10, color: 'var(--text-muted)', display: 'block', marginBottom: 2 }}>Channel</label>
-                      <select
-                        className="select-field"
-                        style={{ width: '100%', padding: '4px 6px', fontSize: 12 }}
-                        value={alertChannel}
-                        onChange={e => {
-                          setAlertChannel(e.target.value);
-                          setSubscriptionActive(false);
-                        }}
-                      >
-                        <option value="none">View Only</option>
-                        <option value="sms">SMS Text Alert</option>
-                        <option value="ivr">IVR Voice Call</option>
-                        <option value="app">Mobile App Push</option>
-                      </select>
-                    </div>
-                  </div>
-
-                  {(alertChannel === 'sms' || alertChannel === 'ivr') && (
-                    <div style={{ animation: 'fadeIn 0.2s ease-in-out' }}>
-                      <label style={{ fontSize: 10, color: 'var(--text-muted)', display: 'block', marginBottom: 2 }}>Phone Number</label>
-                      <input
-                        type="tel"
-                        className="select-field"
-                        placeholder="e.g. +91 98765 43210"
-                        style={{ width: '100%', padding: '5px 8px', fontSize: 12, boxSizing: 'border-box' }}
-                        value={phoneNumber}
-                        onChange={e => {
-                          setPhoneNumber(e.target.value);
-                          setSubscriptionActive(false);
-                        }}
-                      />
-                    </div>
-                  )}
-
-                  <button
-                    className="btn btn-primary btn-sm"
-                    style={{
-                      width: '100%',
-                      background: subscriptionActive ? '#10b981' : '#3b82f6',
-                      color: '#ffffff',
-                      border: 'none',
-                      padding: '8px',
-                      borderRadius: '8px',
-                      fontWeight: '700',
-                      cursor: 'pointer',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      gap: '6px',
-                      transition: 'all 0.2s'
-                    }}
-                    onClick={handleSubscribe}
-                    disabled={subscribing}
-                  >
-                    {subscribing ? (
-                      <span>Applying...</span>
-                    ) : subscriptionActive ? (
-                      <>
-                        <CheckCircle size={12} />
-                        <span>Profile Advisory Applied</span>
-                      </>
-                    ) : (
-                      <>
-                        <BellRing size={12} />
-                        <span>Apply & Subscribe</span>
-                      </>
-                    )}
-                  </button>
-
-                  {subscriptionActive && (
-                    <div style={{
-                      padding: '8px 10px',
-                      background: 'rgba(16,185,129,0.06)',
-                      border: '1px solid rgba(16,185,129,0.25)',
-                      borderRadius: '6px',
-                      color: '#047857',
-                      fontSize: '11px',
-                      fontWeight: '600',
-                      display: 'flex',
-                      alignItems: 'flex-start',
-                      gap: '6px',
-                      marginTop: '2px',
-                      lineHeight: '1.3',
-                      animation: 'fadeIn 0.2s ease-in-out'
-                    }}>
-                      <CheckCircle size={11} style={{ marginTop: '2px', flexShrink: 0 }} />
-                      <span>
-                        Advisory personalized! {alertChannel !== 'none' && `Alert subscription registered successfully for ${alertChannel.toUpperCase()} alerts.`}
-                      </span>
-                    </div>
-                  )}
-                </div>
-              </div>
-
               {/* Emergency Resources — Nearby Hospitals & Medical Stores */}
               <div style={{ marginTop: 14, borderTop: '1px solid var(--border)', paddingTop: 12 }}>
-                <div style={{ fontSize: 12, fontWeight: 700, color: '#0f172a', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
+                <div style={{ fontSize: 14, fontWeight: 700, color: '#0f172a', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
                   <AlertCircle size={14} color="#ef4444" /> Nearby Emergency Resources
                 </div>
                 {nearbyLoading ? (
-                  <div style={{ fontSize: 12, color: 'var(--text-muted)', padding: '8px 0' }}>Searching nearby hospitals & medical stores...</div>
+                  <div style={{ fontSize: 13, color: 'var(--text-muted)', padding: '8px 0' }}>Searching nearby hospitals & medical stores...</div>
                 ) : nearbyPlaces && nearbyPlaces.length > 0 ? (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                     {nearbyPlaces.filter(p => p.type === 'hospital').length > 0 && (
                       <div>
-                        <div style={{ fontSize: 10, fontWeight: 600, color: '#ef4444', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 4, display: 'flex', alignItems: 'center', gap: '4px' }}>
-                          <Building2 size={11} color="#ef4444" />
+                        <div style={{ fontSize: 12, fontWeight: 600, color: '#ef4444', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 4, display: 'flex', alignItems: 'center', gap: '4px' }}>
+                          <Building2 size={13} color="#ef4444" />
                           <span>Hospitals</span>
                         </div>
                         {nearbyPlaces.filter(p => p.type === 'hospital').slice(0, 3).map((p, i) => (
-                          <div key={`h-${i}`} style={{ background: 'rgba(239,68,68,0.06)', padding: '6px 8px', borderRadius: 6, marginBottom: 4, fontSize: 12, borderLeft: '2px solid #ef4444' }}>
+                          <div key={`h-${i}`} style={{ background: 'rgba(239,68,68,0.06)', padding: '6px 8px', borderRadius: 6, marginBottom: 4, fontSize: 14, borderLeft: '2px solid #ef4444' }}>
                             <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{p.name}</div>
-                            {p.address && <div style={{ color: 'var(--text-muted)', fontSize: 11, display: 'flex', alignItems: 'center', gap: '4px', marginTop: '2px' }}><MapPin size={10} color="#64748b" /> {p.address}</div>}
-                            {p.phone && <div style={{ color: 'var(--accent-primary)', fontSize: 11, display: 'flex', alignItems: 'center', gap: '4px', marginTop: '2px' }}><Phone size={10} color="#ef4444" /> {p.phone}</div>}
+                            {p.address && <div style={{ color: 'var(--text-muted)', fontSize: 13, display: 'flex', alignItems: 'center', gap: '4px', marginTop: '2px' }}><MapPin size={10} color="#64748b" /> {p.address}</div>}
+                            {p.phone && <div style={{ color: 'var(--accent-primary)', fontSize: 13, display: 'flex', alignItems: 'center', gap: '4px', marginTop: '2px' }}><Phone size={10} color="#ef4444" /> {p.phone}</div>}
                           </div>
                         ))}
                       </div>
                     )}
                     {nearbyPlaces.filter(p => p.type === 'pharmacy').length > 0 && (
                       <div>
-                        <div style={{ fontSize: 10, fontWeight: 600, color: '#22c55e', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 4, display: 'flex', alignItems: 'center', gap: '4px' }}>
-                          <Activity size={11} color="#22c55e" />
+                        <div style={{ fontSize: 12, fontWeight: 600, color: '#22c55e', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 4, display: 'flex', alignItems: 'center', gap: '4px' }}>
+                          <Activity size={13} color="#22c55e" />
                           <span>Medical Stores / Pharmacies</span>
                         </div>
                         {nearbyPlaces.filter(p => p.type === 'pharmacy').slice(0, 3).map((p, i) => (
-                          <div key={`p-${i}`} style={{ background: 'rgba(34,197,94,0.06)', padding: '6px 8px', borderRadius: 6, marginBottom: 4, fontSize: 12, borderLeft: '2px solid #22c55e' }}>
+                          <div key={`p-${i}`} style={{ background: 'rgba(34,197,94,0.06)', padding: '6px 8px', borderRadius: 6, marginBottom: 4, fontSize: 14, borderLeft: '2px solid #22c55e' }}>
                             <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{p.name}</div>
-                            {p.address && <div style={{ color: 'var(--text-muted)', fontSize: 11, display: 'flex', alignItems: 'center', gap: '4px', marginTop: '2px' }}><MapPin size={10} color="#64748b" /> {p.address}</div>}
-                            {p.phone && <div style={{ color: 'var(--accent-primary)', fontSize: 11, display: 'flex', alignItems: 'center', gap: '4px', marginTop: '2px' }}><Phone size={10} color="#22c55e" /> {p.phone}</div>}
+                            {p.address && <div style={{ color: 'var(--text-muted)', fontSize: 13, display: 'flex', alignItems: 'center', gap: '4px', marginTop: '2px' }}><MapPin size={10} color="#64748b" /> {p.address}</div>}
+                            {p.phone && <div style={{ color: 'var(--accent-primary)', fontSize: 13, display: 'flex', alignItems: 'center', gap: '4px', marginTop: '2px' }}><Phone size={10} color="#22c55e" /> {p.phone}</div>}
                           </div>
                         ))}
                       </div>
                     )}
                   </div>
                 ) : nearbyPlaces && nearbyPlaces.length === 0 ? (
-                  <div style={{ fontSize: 12, color: 'var(--text-muted)', padding: '6px 0' }}>No hospitals or pharmacies found within 3 km radius.</div>
+                  <div style={{ fontSize: 13, color: 'var(--text-muted)', padding: '6px 0' }}>No hospitals or pharmacies found within 3 km radius.</div>
                 ) : null}
-                <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 6 }}>Emergency Helpline: <span style={{ color: '#ef4444', fontWeight: 700 }}>112</span> | Ambulance: <span style={{ color: '#ef4444', fontWeight: 700 }}>108</span></div>
+                <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 6 }}>Emergency Helpline: <span style={{ color: '#ef4444', fontWeight: 700 }}>112</span> | Ambulance: <span style={{ color: '#ef4444', fontWeight: 700 }}>108</span></div>
               </div>
 
-              <div style={{ marginTop: 12, fontSize: 10, color: 'var(--text-muted)' }}>
+              <div style={{ marginTop: 12, fontSize: 12, color: 'var(--text-muted)' }}>
                 Generated at {new Date(advisory.generated_at).toLocaleTimeString()}
               </div>
             </div>
@@ -3291,6 +3151,217 @@ function CitizensAdvisoryPopup({
               <span style={{ color: 'var(--text-muted)', fontSize: 13 }}>Loading advisory...</span>
             </div>
           )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function PersonalAlertSubscriptionPopup({
+  state,
+  profile,
+  onChangeProfile,
+  selectedWard,
+  lang,
+  isOpen,
+  onToggle,
+  onLoadAdvisory
+}) {
+  const [personalProfile, setPersonalProfile] = useState(profile || 'healthy_adult')
+  const [alertChannel, setAlertChannel] = useState('none')
+  const [phoneNumber, setPhoneNumber] = useState('')
+  const [subscriptionActive, setSubscriptionActive] = useState(false)
+  const [subscribing, setSubscribing] = useState(false)
+
+  useEffect(() => {
+    if (profile) {
+      setPersonalProfile(profile);
+    }
+  }, [profile])
+
+  if (!state) return null
+
+  const handleSubscribe = async () => {
+    if (!selectedWard) return;
+    setSubscribing(true);
+    try {
+      const response = await fetch(`/api/advisory/subscribe?ward_id=${selectedWard.id}&profile=${personalProfile}&channel=${alertChannel}&lang=${lang}&phone=${encodeURIComponent(phoneNumber)}`, {
+        method: 'POST'
+      });
+      const data = await response.json();
+      if (data.status === 'success') {
+        setSubscriptionActive(true);
+        onChangeProfile(personalProfile);
+        await onLoadAdvisory(selectedWard.id, lang, personalProfile);
+      }
+    } catch (err) {
+      console.error("Subscription failed:", err);
+    } finally {
+      setSubscribing(false);
+    }
+  }
+
+  return (
+    <div className="alert-subscription-widget-container">
+      {/* Floating Trigger Button */}
+      <button 
+        className={`alert-trigger-btn ${isOpen ? 'open' : ''}`}
+        onClick={onToggle}
+        title="Personal Alert Subscription"
+      >
+        {isOpen ? (
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+          </svg>
+        ) : (
+          <Bell size={22} />
+        )}
+      </button>
+
+      {/* Floating Popup Card */}
+      {isOpen && (
+        <div className="advisory-popup-card" style={{ width: '360px' }}>
+          <div className="advisory-popup-header">
+            <div>
+              <div className="advisory-popup-title">
+                <Bell size={18} color="#3b82f6" />
+                <span style={{ fontSize: '16px' }}>Personal Alert Subscription</span>
+              </div>
+              <div className="advisory-popup-subtitle" style={{ fontSize: '12px' }}>
+                Subscribe to custom air quality alerts
+              </div>
+            </div>
+            <button className="advisory-close-btn" onClick={onToggle}>&times;</button>
+          </div>
+
+          <div style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            {selectedWard ? (
+              <>
+                <div style={{ fontSize: '14px', fontWeight: '600', color: '#475569' }}>
+                  Ward: <span style={{ color: '#0f172a', fontWeight: '700' }}>{selectedWard.name}</span>
+                </div>
+
+                <div>
+                  <label style={{ fontSize: '12px', fontWeight: '600', color: '#64748b', display: 'block', marginBottom: '4px' }}>Profile</label>
+                  <select
+                    className="select-field"
+                    style={{ width: '100%', padding: '8px 12px', fontSize: '14px' }}
+                    value={personalProfile}
+                    onChange={e => {
+                      setPersonalProfile(e.target.value);
+                      setSubscriptionActive(false);
+                    }}
+                  >
+                    <option value="healthy_adult">Healthy Adult</option>
+                    <option value="sensitive">Child / Sensitive Group</option>
+                    <option value="elderly">Elderly (60+)</option>
+                    <option value="outdoor_worker">Outdoor Worker</option>
+                    <option value="asthma">Respiratory / Asthma Condition</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label style={{ fontSize: '12px', fontWeight: '600', color: '#64748b', display: 'block', marginBottom: '4px' }}>Channel</label>
+                  <select
+                    className="select-field"
+                    style={{ width: '100%', padding: '8px 12px', fontSize: '14px' }}
+                    value={alertChannel}
+                    onChange={e => {
+                      setAlertChannel(e.target.value);
+                      setSubscriptionActive(false);
+                    }}
+                  >
+                    <option value="none">View Only</option>
+                    <option value="sms">SMS Text Alert</option>
+                    <option value="ivr">IVR Voice Call</option>
+                    <option value="app">Mobile App Push</option>
+                  </select>
+                </div>
+
+                {(alertChannel === 'sms' || alertChannel === 'ivr') && (
+                  <div style={{ animation: 'fadeIn 0.2s ease-in-out' }}>
+                    <label style={{ fontSize: '12px', fontWeight: '600', color: '#64748b', display: 'block', marginBottom: '4px' }}>Phone Number</label>
+                    <input
+                      type="tel"
+                      className="select-field"
+                      placeholder="e.g. +91 98765 43210"
+                      style={{ width: '100%', padding: '8px 12px', fontSize: '14px', boxSizing: 'border-box' }}
+                      value={phoneNumber}
+                      onChange={e => {
+                        setPhoneNumber(e.target.value);
+                        setSubscriptionActive(false);
+                      }}
+                    />
+                  </div>
+                )}
+
+                <button
+                  className="btn btn-primary"
+                  style={{
+                    width: '100%',
+                    background: subscriptionActive ? '#10b981' : '#3b82f6',
+                    color: '#ffffff',
+                    border: 'none',
+                    padding: '10px',
+                    borderRadius: '8px',
+                    fontWeight: '700',
+                    fontSize: '14px',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '6px',
+                    marginTop: '8px',
+                    transition: 'all 0.2s'
+                  }}
+                  onClick={handleSubscribe}
+                  disabled={subscribing}
+                >
+                  {subscribing ? (
+                    <span>Applying...</span>
+                  ) : subscriptionActive ? (
+                    <>
+                      <CheckCircle size={14} />
+                      <span>Profile Advisory Applied</span>
+                    </>
+                  ) : (
+                    <>
+                      <BellRing size={14} />
+                      <span>Apply & Subscribe</span>
+                    </>
+                  )}
+                </button>
+
+                {subscriptionActive && (
+                  <div style={{
+                    padding: '10px 12px',
+                    background: 'rgba(16,185,129,0.06)',
+                    border: '1px solid rgba(16,185,129,0.25)',
+                    borderRadius: '6px',
+                    color: '#047857',
+                    fontSize: '13px',
+                    fontWeight: '600',
+                    display: 'flex',
+                    alignItems: 'flex-start',
+                    gap: '6px',
+                    marginTop: '4px',
+                    lineHeight: '1.4',
+                    animation: 'fadeIn 0.2s ease-in-out'
+                  }}>
+                    <CheckCircle size={14} style={{ marginTop: '2px', flexShrink: 0 }} />
+                    <span>
+                      Advisory personalized! {alertChannel !== 'none' && `Alert subscription registered successfully for ${alertChannel.toUpperCase()} alerts.`}
+                    </span>
+                  </div>
+                )}
+              </>
+            ) : (
+              <div style={{ textAlign: 'center', padding: '16px', color: '#64748b', fontSize: '13px' }}>
+                Please select a ward on the dashboard to subscribe.
+              </div>
+            )}
+          </div>
         </div>
       )}
     </div>

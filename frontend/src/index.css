@@ -799,7 +799,7 @@ body{
   padding-bottom: 10px;
 }
 .advisory-popup-title {
-  font-size: 14px;
+  font-size: 16px;
   font-weight: 700;
   color: var(--text-primary);
   display: flex;
@@ -807,7 +807,7 @@ body{
   gap: 7px;
 }
 .advisory-popup-subtitle {
-  font-size: 10px;
+  font-size: 12px;
   color: var(--text-muted);
   margin-top: 3px;
 }
@@ -834,7 +834,7 @@ body{
   border: 1.5px solid #cbd5e1;
   border-radius: 8px;
   padding: 8px 36px 8px 12px;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 600;
   color: #0f172a;
   outline: none;
@@ -850,4 +850,37 @@ body{
   border-color: #3b82f6;
   box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
 }
+
+/* ── Alert Subscription Widget ────────────────────────────────────────────── */
+.alert-subscription-widget-container {
+  position: fixed;
+  bottom: 22px;
+  right: 84px;
+  z-index: 9999;
+  font-family: 'Inter', sans-serif;
+}
+.alert-trigger-btn {
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  background: #3b82f6;
+  border: none;
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: 0 4px 18px rgba(59, 130, 246, 0.35);
+  transition: all 0.28s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.alert-trigger-btn:hover {
+  transform: scale(1.1);
+  box-shadow: 0 6px 22px rgba(59, 130, 246, 0.55);
+}
+.alert-trigger-btn.open {
+  background: #ef4444;
+  box-shadow: 0 4px 18px rgba(239, 68, 68, 0.4);
+  transform: rotate(90deg);
+}
+
 
