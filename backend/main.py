@@ -15,6 +15,7 @@ if sys.platform == "win32":
 
 import os
 from datetime import datetime
+import httpx
 from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
