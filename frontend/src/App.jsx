@@ -3055,15 +3055,17 @@ function CitizensAdvisoryPopup({ state, advisory, lang, onChangeLang, selectedWa
                 <div style={{ 
                   marginTop: '12px', 
                   padding: '10px 12px', 
-                  background: 'rgba(255,255,255,0.03)', 
+                  background: '#f1f5f9', 
                   borderRadius: '6px', 
                   fontSize: '12px', 
                   borderLeft: `3px solid ${aqiColor(advisory.aqi)}`,
-                  color: '#e2e8f0',
-                  lineHeight: '1.4'
+                  color: '#334155',
+                  lineHeight: '1.4',
+                  border: '1px solid #e2e8f0',
+                  borderLeftWidth: '3px'
                 }}>
-                  <strong style={{ color: '#f1f5f9', display: 'block', marginBottom: '2px' }}>
-                    🔍 Driver Analysis:
+                  <strong style={{ color: '#0f172a', display: 'flex', alignItems: 'center', gap: '4px', marginBottom: '2px' }}>
+                    <Search size={12} color="#3b82f6" /> Driver Analysis:
                   </strong>
                   {advisory.reason}
                 </div>
@@ -3088,25 +3090,28 @@ function CitizensAdvisoryPopup({ state, advisory, lang, onChangeLang, selectedWa
 
               {/* Vulnerability chips */}
               {advisory.vulnerable_info && (
-                <div style={{ marginTop: 12, borderTop: '1px solid var(--border-subtle)', paddingTop: 10 }}>
+                <div style={{ marginTop: 12, borderTop: '1px solid var(--border)', paddingTop: 10 }}>
                   <div className="chip-row" style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                    <div className="chip" style={{ fontSize: 11, padding: '4px 8px' }}>
-                      <span className="chip-icon">🏥</span> {advisory.vulnerable_info.hospitals} Hosp.
+                    <div className="chip" style={{ fontSize: 11, padding: '4px 8px', display: 'flex', alignItems: 'center', gap: '4px', background: '#ffffff', border: '1px solid #e2e8f0' }}>
+                      <Building2 size={12} color="#3b82f6" />
+                      <span>{advisory.vulnerable_info.hospitals} Hosp.</span>
                     </div>
-                    <div className="chip" style={{ fontSize: 11, padding: '4px 8px' }}>
-                      <span className="chip-icon">🏫</span> {advisory.vulnerable_info.schools} Schools
+                    <div className="chip" style={{ fontSize: 11, padding: '4px 8px', display: 'flex', alignItems: 'center', gap: '4px', background: '#ffffff', border: '1px solid #e2e8f0' }}>
+                      <GraduationCap size={12} color="#f59e0b" />
+                      <span>{advisory.vulnerable_info.schools} Schools</span>
                     </div>
-                    <div className="chip" style={{ fontSize: 11, padding: '4px 8px' }}>
-                      <span className="chip-icon">👴</span> {advisory.vulnerable_info.elderly_pct}% Elderly
+                    <div className="chip" style={{ fontSize: 11, padding: '4px 8px', display: 'flex', alignItems: 'center', gap: '4px', background: '#ffffff', border: '1px solid #e2e8f0' }}>
+                      <Users size={12} color="#10b981" />
+                      <span>{advisory.vulnerable_info.elderly_pct}% Elderly</span>
                     </div>
                   </div>
                 </div>
               )}
 
               {/* Emergency Resources — Nearby Hospitals & Medical Stores */}
-              <div style={{ marginTop: 14, borderTop: '1px solid var(--border-subtle)', paddingTop: 12 }}>
-                <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <span style={{ fontSize: 16 }}>🚑</span> Nearby Emergency Resources
+              <div style={{ marginTop: 14, borderTop: '1px solid var(--border)', paddingTop: 12 }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: '#0f172a', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <AlertCircle size={14} color="#ef4444" /> Nearby Emergency Resources
                 </div>
                 {nearbyLoading ? (
                   <div style={{ fontSize: 12, color: 'var(--text-muted)', padding: '8px 0' }}>Searching nearby hospitals & medical stores...</div>
