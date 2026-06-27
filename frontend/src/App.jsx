@@ -1139,7 +1139,7 @@ function ForecastView({ state, forecast, hours, onChangeHours, selectedWard, onS
                 w.ward_id.startsWith('hyderabad_') || w.ward_id.startsWith('kolkata_')
               );
               // Show mitigated AQI on the map if active, fallback to predicted AQI
-              const displayAqi = w.mitigated_aqi !== undefined ? w.mitigated_aqi : w.predicted_aqi;
+              const displayAqi = Math.round(w.mitigated_aqi !== undefined ? w.mitigated_aqi : w.predicted_aqi);
               return (
               <Marker
                 key={w.ward_id}
@@ -1158,9 +1158,9 @@ function ForecastView({ state, forecast, hours, onChangeHours, selectedWard, onS
                     Expected AQI: <strong style={{ color: aqiColor(displayAqi) }}>
                       {displayAqi}
                     </strong><br />
-                    {w.mitigated_aqi !== undefined && w.mitigated_aqi !== w.predicted_aqi && (
+                    {w.mitigated_aqi !== undefined && Math.round(w.mitigated_aqi) !== Math.round(w.predicted_aqi) && (
                       <span style={{ fontSize: '11px', color: '#10b981' }}>
-                        (Reduced from {w.predicted_aqi} baseline)<br />
+                        (Reduced from {Math.round(w.predicted_aqi)} baseline)<br />
                       </span>
                     )}
                     Confidence: {(w.confidence * 100).toFixed(0)}%
