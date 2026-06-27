@@ -2136,19 +2136,26 @@ function CitizensAdvisoryPopup({ state, advisory, lang, onChangeLang, selectedWa
     else if (lang === 'te') langCode = 'te-IN'
 
     if (lang !== 'en') {
-      // Force Google Translate TTS cloud audio stream for all non-English languages
-      console.log(`Using Google Translate cloud TTS: ${langCode}`)
-      const url = `https://translate.google.com/translate_tts?ie=UTF-8&tl=${langCode}&client=tw-ob&q=${encodeURIComponent(textToRead)}`
+      // Force Google Translate TTS cloud audio stream for all non-English languages using 2-letter codes
+      console.log(`Using Google Translate cloud TTS: ${lang}`)
+      const url = `https://translate.google.com/translate_tts?ie=UTF-8&tl=${lang}&client=tw-ob&q=${encodeURIComponent(textToRead)}`
       
       const audio = new Audio(url)
       audioRef.current = audio
       audio.onended = () => setIsSpeaking(false)
-      audio.onerror = () => setIsSpeaking(false)
+      audio.onerror = (e) => {
+        console.error("Cloud Audio error event, falling back to local synthesis:", e)
+        const utterance = new SpeechSynthesisUtterance(textToRead)
+        utterance.lang = langCode
+        utterance.onend = () => setIsSpeaking(false)
+        utterance.onerror = () => setIsSpeaking(false)
+        window.speechSynthesis.speak(utterance)
+      }
       
       setIsSpeaking(true)
       audio.play().catch(err => {
-        console.error("Cloud Audio playback failed, falling back to local synthesis:", err)
-        // Fallback to local synthesis anyway
+        console.error("Cloud Audio play failed, falling back to local synthesis:", err)
+        // Fallback to local synthesis
         const utterance = new SpeechSynthesisUtterance(textToRead)
         utterance.lang = langCode
         utterance.onend = () => setIsSpeaking(false)
