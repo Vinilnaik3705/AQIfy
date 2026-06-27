@@ -215,8 +215,9 @@ export default function App() {
         setTargetZoom(5)
       }
     }
+    await loadDispatches()
     if (isInitial) setLoading(false)
-  }, [])
+  }, [loadDispatches])
 
   useEffect(() => {
     loadState(true)
@@ -316,7 +317,7 @@ export default function App() {
   const cityAqi = state
     ? Math.round(state.sensors.reduce((s, r) => s + (r.aqi_in ?? r.aqi), 0) / state.sensors.length)
     : 0
-  const alertCount = state ? state.sensors.filter(s => (s.aqi_in ?? s.aqi) > 150).length : 0
+  const alertCount = dispatches ? dispatches.total_hotspots : 0
 
   return (
     <div className="app-shell">
