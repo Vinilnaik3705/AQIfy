@@ -583,8 +583,42 @@ async def get_aqi_details(
     state: str = ""
 ):
     """Fetch live AQI and weather details for any latitude and longitude and compute Indian AQI."""
-    from simulation import _fetch_real_aqi, _fetch_live_weather, calculate_indian_aqi, is_in_india
+    from simulation import _fetch_real_aqi, _fetch_live_weather, calculate_indian_aqi, is_in_india, CITIES
     
+    # Check if this matches a preset city in CITIES within 0.05 degrees (approx 5km)
+    matched_city_key = None
+    for k, info in CITIES.items():
+        c_lat, c_lng = info["center"]
+        if abs(c_lat - lat) < 0.05 and abs(c_lng - lng) < 0.05:
+            matched_city_key = k
+            break
+
+    if matched_city_key:
+        readings = await sim.generate_readings(matched_city_key)
+        if readings:
+            r = readings[0]
+            weather = await _fetch_live_weather(lat, lng)
+            if not weather:
+                weather = {"temperature_c": None, "wind_speed_kmh": None}
+            return {
+                "id": matched_city_key,
+                "name": name,
+                "state": state,
+                "country": country,
+                "center": [lat, lng],
+                "current_aqi": r["aqi"],
+                "aqi_in": r["aqi_in"],
+                "weather": weather,
+                "pollutants": {
+                    "pm25": round(r["pollutants"]["pm25"], 1),
+                    "pm10": round(r["pollutants"]["pm10"], 1),
+                    "co": r["pollutants"]["co"],
+                    "so2": r["pollutants"]["so2"],
+                    "no2": r["pollutants"]["no2"],
+                    "o3": r["pollutants"]["o3"]
+                }
+            }
+
     aqi_data = await _fetch_real_aqi(lat, lng)
     if not aqi_data:
         # Fallback estimation
