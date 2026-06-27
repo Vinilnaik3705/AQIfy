@@ -914,7 +914,6 @@ function CommandCenter({ state, selectedWard, onSelectWard, mapStyle, setMapStyl
   // Floating Map Overlays State
   const [showStations, setShowStations] = useState(true)
   const [showFires, setShowFires] = useState(false)
-  const [showWind, setShowWind] = useState(true)
   const [showFactories, setShowFactories] = useState(true)
   const [showVehicular, setShowVehicular] = useState(true)
   const [showConstruction, setShowConstruction] = useState(true)
@@ -1168,8 +1167,7 @@ function CommandCenter({ state, selectedWard, onSelectWard, mapStyle, setMapStyl
               />
             )}
 
-            {/* Custom Wind Particle Animation Overlay */}
-            {showWind && <WindStreamAnimation />}
+
 
             {/* Registered Emission Sources (Toggled by Factories, Vehicular, Construction) */}
             {state.sources && state.sources.map(src => {
@@ -1303,45 +1301,7 @@ function CommandCenter({ state, selectedWard, onSelectWard, mapStyle, setMapStyl
               {showFires && <span style={{ color: '#3b82f6', fontWeight: '700', fontSize: '13px' }}>✓</span>}
             </button>
 
-            {/* Wind Pill */}
-            <button 
-              onClick={() => setShowWind(!showWind)}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '10px',
-                padding: '6px 14px 6px 6px',
-                background: '#ffffff',
-                border: '1px solid #e2e8f0',
-                borderRadius: '24px',
-                cursor: 'pointer',
-                boxShadow: '0 2px 6px rgba(0,0,0,0.05)',
-                fontWeight: '600',
-                fontSize: '12px',
-                color: '#1e293b',
-                width: '185px',
-                justifyContent: 'space-between',
-                transition: 'all 0.15s ease'
-              }}
-            >
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <div style={{
-                  width: '28px',
-                  height: '28px',
-                  borderRadius: '50%',
-                  background: showWind ? '#3b82f6' : '#f1f5f9',
-                  color: showWind ? '#ffffff' : '#64748b',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  fontSize: '13px'
-                }}>
-                  💨
-                </div>
-                <span>Wind</span>
-              </div>
-              {showWind && <span style={{ color: '#3b82f6', fontWeight: '700', fontSize: '13px' }}>✓</span>}
-            </button>
+
 
             <span style={{ fontSize: '10px', fontWeight: '800', color: '#475569', textTransform: 'uppercase', letterSpacing: '0.5px', marginTop: '6px', marginBottom: '2px', paddingLeft: '4px' }}>Emission Sources</span>
 
