@@ -294,32 +294,22 @@ export default function App() {
 
   return (
     <div className="app-shell">
-      {/* ── Sidebar ──────────────────────────────────────────────────── */}
-      <nav className="sidebar">
-        <div className="sidebar-logo">AQ</div>
-        {TABS.map(t => (
-          <button
-            key={t.id}
-            id={`nav-${t.id}`}
-            className={`sidebar-btn ${tab === t.id ? 'active' : ''}`}
-            onClick={() => setTab(t.id)}
-          >
-            {t.icon}
-            <span className="sidebar-tooltip">{t.label}</span>
-          </button>
-        ))}
-      </nav>
+      <Header
+        tab={tab}
+        setTab={setTab}
+        cityAqi={cityAqi}
+        alertCount={alertCount}
+        weather={state?.weather}
+        onSelectPlace={handleSelectPlace}
+      />
 
-      {/* ── Main ─────────────────────────────────────────────────────── */}
       <div className="main-content">
-        <Header
-          tab={tab}
-          setTab={setTab}
-          cityAqi={cityAqi}
-          alertCount={alertCount}
-          weather={state?.weather}
-          onSelectPlace={handleSelectPlace}
-        />
+        {tab === 'command' && (
+          <div className="title-section">
+            <h1 className="main-title">Live Air Quality Map</h1>
+            <p className="subtitle">Real-time air quality data from over 800,000 monitoring sensors worldwide.</p>
+          </div>
+        )}
 
         {tab === 'command' && (
           <CommandCenter
@@ -331,6 +321,8 @@ export default function App() {
             customPlaces={customPlaces}
             targetCenter={targetCenter}
             targetZoom={targetZoom}
+            setTab={setTab}
+            onSelectPlace={handleSelectPlace}
           />
         )}
         {tab === 'forecast' && (
@@ -489,17 +481,18 @@ function HeaderSearch({ onSelectPlace }) {
 
 function Header({ tab, setTab, cityAqi, alertCount, weather, onSelectPlace }) {
   const navItems = [
-    { id: 'command', label: 'Dashboard' },
-    { id: 'enforcement', label: 'Disputed Items' },
-    { id: 'forecast', label: 'Action Plan' },
-    { id: 'analytics', label: 'Documents' },
-    { id: 'attribution', label: 'Source Analysis' },
+    { id: 'command', label: 'Air Quality Data' },
+    { id: 'enforcement', label: 'Learn' },
+    { id: 'attribution', label: 'News' },
+    { id: 'forecast', label: 'Impact' },
+    { id: 'analytics', label: 'Support' },
   ]
 
   return (
     <header className="header">
       <div className="brand-section">
-        Weather<span className="brand-swim">Swim</span>
+        <div className="brand-logo-red">+</div>
+        IQAir
       </div>
 
       <div className="header-nav-pills">
@@ -512,42 +505,42 @@ function Header({ tab, setTab, cityAqi, alertCount, weather, onSelectPlace }) {
             {item.label}
           </button>
         ))}
+        <button className="nav-pill">Shop</button>
       </div>
 
       <div className="header-right">
-        <HeaderSearch onSelectPlace={onSelectPlace} />
-        
-        {/* Filter button */}
-        <button className="icon-btn" title="Filter options">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"></polygon>
+        {/* Search icon */}
+        <button className="header-icon" title="Search" style={{ background: 'none', border: 'none' }}>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="11" cy="11" r="8"></circle>
+            <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
           </svg>
         </button>
 
-        {/* Notifications button */}
-        <button className="icon-btn" title="Alerts & Notifications" style={{ position: 'relative' }}>
-          <Bell size={16} color={alertCount > 0 ? '#ef4444' : '#475569'} />
-          {alertCount > 0 && (
-            <span style={{ position: 'absolute', top: '2px', right: '2px', width: '8px', height: '8px', borderRadius: '50%', background: '#ef4444' }} />
-          )}
-        </button>
-
-        {/* Settings button */}
-        <button className="icon-btn" title="Settings">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <circle cx="12" cy="12" r="3"></circle>
-            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+        {/* US Flag Dropdown */}
+        <div className="flag-select">
+          <span style={{ fontSize: '20px' }}>🇺🇸</span>
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" style={{ marginLeft: '2px', color: '#475569' }}>
+            <polyline points="6 9 12 15 18 9"></polyline>
           </svg>
-        </button>
-
-        {/* Profile Card */}
-        <div className="profile-card">
-          <div className="profile-avatar">☘</div>
-          <div className="profile-info">
-            <span className="profile-name">Cansaas Agency</span>
-            <span className="profile-sub">cansaas.weather.com</span>
-          </div>
         </div>
+
+        {/* User Account Icon */}
+        <button className="header-icon" title="User Profile" style={{ background: 'none', border: 'none' }}>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+            <circle cx="12" cy="7" r="4"></circle>
+          </svg>
+        </button>
+
+        {/* Shopping Cart Icon */}
+        <button className="header-icon" title="Shopping Cart" style={{ background: 'none', border: 'none' }}>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="9" cy="21" r="1"></circle>
+            <circle cx="20" cy="21" r="1"></circle>
+            <path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"></path>
+          </svg>
+        </button>
       </div>
     </header>
   )
@@ -637,18 +630,64 @@ function EmissionSourcePopup({ src }) {
 
 /* ── Command Center ────────────────────────────────────────────────────── */
 
-function CommandCenter({ state, selectedWard, onSelectWard, mapStyle, setMapStyle, customPlaces, targetCenter, targetZoom }) {
-  const [activeTrendTab, setActiveTrendTab] = useState('REAL TIME')
+function CommandCenter({ state, selectedWard, onSelectWard, mapStyle, setMapStyle, customPlaces, targetCenter, targetZoom, setTab, onSelectPlace }) {
+  const [query, setQuery] = useState('')
+  const [results, setResults] = useState([])
+  const [showDropdown, setShowDropdown] = useState(false)
+  const dropdownRef = useRef(null)
+
+  useEffect(() => {
+    function handleClickOutside(event) {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
+        setShowDropdown(false)
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside)
+    return () => document.removeEventListener("mousedown", handleClickOutside)
+  }, [])
+
+  const handleSearch = async (val) => {
+    setQuery(val)
+    if (val.trim().length < 2) {
+      setResults([])
+      return
+    }
+    try {
+      const res = await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(val)}&count=6&language=en&format=json&countrycode=in`)
+      if (res.ok) {
+        const data = await res.json()
+        if (data.results) {
+          setResults(data.results)
+          setShowDropdown(true)
+        } else {
+          setResults([])
+        }
+      }
+    } catch (e) {
+      console.error(e)
+    }
+  }
+
+  const selectItem = (item) => {
+    onSelectPlace({
+      name: item.name,
+      state: item.admin1 || '',
+      country: item.country || '',
+      lat: item.latitude,
+      lng: item.longitude
+    })
+    setQuery('')
+    setResults([])
+    setShowDropdown(false)
+  }
 
   if (!state) return null;
 
-  // Resolve values for floating circles
+  // Resolve values for Left Column Card
   const temp = selectedWard?.weather?.temperature_c ?? state.weather?.temperature_c ?? 23;
   const humidity = selectedWard?.weather?.humidity_pct ?? state.weather?.humidity_pct ?? 84;
   const windKmh = selectedWard?.weather?.wind_speed_kmh ?? state.weather?.wind_speed_kmh ?? 7.5;
-  const windMs = (windKmh / 3.6).toFixed(1);
-  const windDir = state.weather?.wind_direction_degrees ?? 240;
-  
+
   // Calculate PM2.5 value
   let pm25 = 5;
   if (selectedWard?.pollutants) {
@@ -662,81 +701,109 @@ function CommandCenter({ state, selectedWard, onSelectWard, mapStyle, setMapStyl
   }
   pm25 = Math.round(pm25);
 
-  const trendAqi = selectedWard?.aqi_in ?? selectedWard?.current_aqi ?? 120;
-
-  // Render chart configurations
-  const trendData = {
-    labels: ['06:00', '08:00', '10:00', '12:00', '14:00', '16:00', '18:00', '20:00'],
-    datasets: [{
-      label: 'AQI Level',
-      data: [
-        Math.round(trendAqi * 0.75),
-        Math.round(trendAqi * 0.85),
-        Math.round(trendAqi * 0.95),
-        Math.round(trendAqi * 1.15),
-        Math.round(trendAqi * 1.05),
-        Math.round(trendAqi * 0.8),
-        Math.round(trendAqi * 0.9),
-        Math.round(trendAqi * 1.0)
-      ],
-      borderColor: '#10b981',
-      backgroundColor: 'rgba(16, 185, 129, 0.05)',
-      fill: true,
-      tension: 0.4,
-      borderWidth: 2,
-      pointRadius: 2,
-    }]
-  };
-
-  const carbonData = {
-    labels: ['06:00', '08:00', '10:00', '12:00', '14:00', '16:00', '18:00', '20:00'],
-    datasets: [
-      {
-        label: 'Current',
-        data: [
-          Math.round(trendAqi * 0.75 * 0.8),
-          Math.round(trendAqi * 0.85 * 0.8),
-          Math.round(trendAqi * 0.95 * 0.75),
-          Math.round(trendAqi * 1.15 * 0.72),
-          Math.round(trendAqi * 1.05 * 0.76),
-          Math.round(trendAqi * 0.8 * 0.8),
-          Math.round(trendAqi * 0.9 * 0.82),
-          Math.round(trendAqi * 1.0 * 0.8)
-        ],
-        borderColor: '#10b981',
-        backgroundColor: 'transparent',
-        borderWidth: 2,
-        tension: 0.4,
-        pointRadius: 0
-      },
-      {
-        label: 'Baseline',
-        data: [
-          Math.round(trendAqi * 0.75),
-          Math.round(trendAqi * 0.85),
-          Math.round(trendAqi * 0.95),
-          Math.round(trendAqi * 1.15),
-          Math.round(trendAqi * 1.05),
-          Math.round(trendAqi * 0.8),
-          Math.round(trendAqi * 0.9),
-          Math.round(trendAqi * 1.0)
-        ],
-        borderColor: '#f59e0b',
-        backgroundColor: 'transparent',
-        borderWidth: 2,
-        tension: 0.4,
-        pointRadius: 0
-      }
-    ]
-  };
+  const trendAqi = selectedWard?.aqi_in ?? selectedWard?.current_aqi ?? Math.round(state.sensors.reduce((s, r) => s + (r.aqi_in ?? r.aqi), 0) / state.sensors.length);
+  const selectedCityName = selectedWard?.name ?? state.city.name;
 
   return (
-    <div className="content-area" style={{ display: 'flex', flexDirection: 'row', gap: '16px', flex: 1, overflow: 'hidden' }}>
-      {/* Left side containing Map and Bottom Deck */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', flex: 1, minWidth: 0 }}>
-        
-        {/* Map panel */}
-        <div className="map-section">
+    <div className="content-area" style={{ display: 'flex', flexDirection: 'row', gap: '24px', flex: 1, overflow: 'hidden' }}>
+      <div className="iqair-layout-grid">
+        {/* Left Column */}
+        <div className="iqair-left-panel">
+          {/* Search box */}
+          <div className="iqair-search-box" ref={dropdownRef}>
+            <Search size={14} color="#94a3b8" style={{ position: 'absolute', left: '12px', pointerEvents: 'none' }} />
+            <input
+              type="text"
+              className="iqair-search-input"
+              placeholder="Your country, city or location..."
+              value={query}
+              onFocus={() => { if (results.length) setShowDropdown(true) }}
+              onChange={e => handleSearch(e.target.value)}
+            />
+            {showDropdown && results.length > 0 && (
+              <div
+                className="map-search-results"
+                onMouseDown={e => e.stopPropagation()}
+                onClick={e => e.stopPropagation()}
+                style={{ position: 'absolute', top: '44px', left: 0, width: '100%', zIndex: 9999, background: '#ffffff', border: '1px solid var(--border)', borderRadius: 'var(--r-sm)' }}
+              >
+                {results.map((r, i) => (
+                  <div
+                    key={i}
+                    className="map-search-result-row"
+                    onClick={(e) => { e.stopPropagation(); selectItem(r); }}
+                    style={{ padding: '8px 12px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px' }}
+                  >
+                    <MapPin size={11} color="#4a6080" />
+                    <span>
+                      <strong>{r.name}</strong>
+                      {r.admin1 && `, ${r.admin1}`}
+                      {r.country && ` (${r.country})`}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="city-aqi-header-title">
+            {selectedCityName} air quality index (AQI)
+          </div>
+
+          {/* Highlight AQI Card */}
+          <div 
+            className="iqair-aqi-card" 
+            style={{ 
+              backgroundColor: aqiColor(trendAqi), 
+              color: getAqiTextColor(trendAqi) 
+            }}
+          >
+            <div className="aqi-card-top">
+              <div className="aqi-card-number-box">
+                <span className="aqi-card-num" style={{ color: '#0f172a' }}>
+                  {Math.round(trendAqi)}
+                </span>
+                <span className="aqi-card-unit">US AQI</span>
+              </div>
+              <div className="aqi-card-status-text">
+                {aqiLevel(trendAqi).replace('_', ' ').toUpperCase()}
+              </div>
+              <div className="aqi-card-face-icon">
+                {(() => {
+                  const level = aqiLevel(trendAqi);
+                  if (level === 'good') return '😊';
+                  if (level === 'satisfactory') return '🙂';
+                  if (level === 'moderate') return '😐';
+                  if (level === 'poor') return '😷';
+                  if (level === 'very_poor') return '🤢';
+                  return '💀';
+                })()}
+              </div>
+            </div>
+
+            <div className="aqi-card-divider" style={{ backgroundColor: 'rgba(255,255,255,0.2)' }} />
+            
+            <div className="aqi-card-pollutant-row" style={{ color: getAqiTextColor(trendAqi) }}>
+              <span>Main pollutant</span>
+              <strong>PM2.5 | {pm25} µg/m³</strong>
+            </div>
+
+            <div className="aqi-card-divider" style={{ backgroundColor: 'rgba(255,255,255,0.2)' }} />
+
+            <div className="aqi-card-weather-strip">
+              <span className="weather-strip-item">🌡️ {Math.round(temp)}°C</span>
+              <span className="weather-strip-item">💨 {windKmh.toFixed(1)} km/h</span>
+              <span className="weather-strip-item">💧 {humidity}%</span>
+            </div>
+          </div>
+
+          <button className="forecast-btn-dark" onClick={() => setTab('forecast')}>
+            7-DAY FORECAST
+          </button>
+        </div>
+
+        {/* Right Column (Map + Earth 3D overlay) */}
+        <div className="iqair-right-panel">
           <MapContainer
             center={state.city.center}
             zoom={5}
@@ -823,164 +890,18 @@ function CommandCenter({ state, selectedWard, onSelectWard, mapStyle, setMapStyl
             ))}
           </MapContainer>
 
-          {/* Floating Metric Overlay circles */}
-          <div className="floating-metric-overlay">
-            {/* Circle 1: Rainfall */}
-            <div className="floating-metric-circle pos-top-left">
-              <span className="metric-circle-icon">🌧</span>
-              <span className="metric-circle-value">0<span className="metric-circle-unit">mm</span></span>
-              <span className="metric-circle-label">Rainfall</span>
-            </div>
-
-            {/* Circle 2: Humidity */}
-            <div className="floating-metric-circle pos-top-right">
-              <span className="metric-circle-icon">💧</span>
-              <span className="metric-circle-value">{humidity}<span className="metric-circle-unit">%</span></span>
-              <span className="metric-circle-label">Humidity</span>
-            </div>
-
-            {/* Circle 3: Temperature */}
-            <div className="floating-metric-circle pos-bottom-left">
-              <span className="metric-circle-icon">🌡</span>
-              <span className="metric-circle-value">{Math.round(temp)}<span className="metric-circle-unit">°C</span></span>
-              <span className="metric-circle-label">Temperature</span>
-            </div>
-
-            {/* Circle 4: PM2.5 Index */}
-            <div className="floating-metric-circle pos-bottom-right">
-              <span className="metric-circle-icon">⚡</span>
-              <span className="metric-circle-value">{pm25}<span className="metric-circle-unit">idx</span></span>
-              <span className="metric-circle-label">PM2.5/AIR</span>
-            </div>
-
-            {/* Central green map pin */}
-            <div className="map-center-indicator">📍</div>
-            <div className="map-center-label">{selectedWard?.name ?? state.city.name}</div>
-
-            {/* Horizontal Legend at bottom-left */}
-            <div className="map-legend-horizontal">
-              <div className="legend-label-row">
-                <span>Low</span>
-                <span>High</span>
-              </div>
-              <div className="legend-gradient-bar" />
-              <div className="legend-subtext">
-                <span>ⓘ PM2.5 concentration</span>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Bottom Cards Deck */}
-        <div className="bottom-cards-deck">
-          
-          {/* Card 1: Pollution Trend Analysis */}
-          <div className="glass-deck-card">
-            <div className="card-header-row">
-              <span className="deck-card-title">Pollution Trend Analysis</span>
-              <div className="deck-card-pills">
-                {['REAL TIME', 'WEEKLY', 'MONTHLY', 'YEARLY'].map(t => (
-                  <button
-                    key={t}
-                    className={`deck-card-pill-btn ${activeTrendTab === t ? 'active' : ''}`}
-                    onClick={() => setActiveTrendTab(t)}
-                  >
-                    {t}
-                  </button>
-                ))}
-              </div>
-            </div>
-            
-            <div style={{ height: '140px', position: 'relative' }}>
-              <Line
-                data={trendData}
-                options={{
-                  responsive: true,
-                  maintainAspectRatio: false,
-                  plugins: { legend: { display: false } },
-                  scales: {
-                    x: { ticks: { color: '#94a3b8', font: { size: 9 } }, grid: { display: false } },
-                    y: { ticks: { color: '#94a3b8', font: { size: 9 } }, grid: { color: 'rgba(0,0,0,0.03)' } }
-                  }
-                }}
-              />
-            </div>
-          </div>
-
-          {/* Card 2: Air Flow Status */}
-          <div className="glass-deck-card">
-            <span className="deck-card-title">Air Flow Status</span>
-            
-            <div className="wind-dial-container">
-              <div className="wind-speed-large">
-                <span className="wind-val">{windKmh.toFixed(1)} <span style={{ fontSize: '18px', fontWeight: 600 }}>km/h</span></span>
-                <span className="wind-lbl">Wind Speed</span>
-              </div>
-
-              {/* Compass Dial */}
-              <div className="compass-dial">
-                <span className="compass-label lbl-n">N</span>
-                <span className="compass-label lbl-e">E</span>
-                <span className="compass-label lbl-s">S</span>
-                <span className="compass-label lbl-w">W</span>
-                
-                {/* Needle */}
-                <div 
-                  className="compass-arrow-needle" 
-                  style={{ transform: `rotate(${windDir}deg)` }} 
-                />
-
-                <div className="compass-center-bubble">
-                  <span className="compass-center-val">{windMs}</span>
-                  <span className="compass-center-lbl">m/s</span>
-                </div>
-              </div>
-            </div>
-
-            <div className="bottom-info-banner">
-              <span>🍃</span>
-              <span>Fresh Air Movement! Wind circulation is helping reduce pollutant.</span>
-            </div>
-          </div>
-
-          {/* Card 3: Carbon Monitoring / Mitigation Offset */}
-          <div className="glass-deck-card">
-            <div className="card-header-row">
-              <span className="deck-card-title">Carbon Monitoring</span>
-              <div style={{ display: 'flex', gap: '8px', fontSize: '10px', fontWeight: '700' }}>
-                <span style={{ color: '#10b981' }}>● Current</span>
-                <span style={{ color: '#f59e0b' }}>● Baseline</span>
-              </div>
-            </div>
-
-            <div style={{ height: '110px', position: 'relative' }}>
-              <Line
-                data={carbonData}
-                options={{
-                  responsive: true,
-                  maintainAspectRatio: false,
-                  plugins: { legend: { display: false } },
-                  scales: {
-                    x: { ticks: { color: '#94a3b8', font: { size: 9 } }, grid: { display: false } },
-                    y: { ticks: { color: '#94a3b8', font: { size: 9 } }, grid: { color: 'rgba(0,0,0,0.03)' } }
-                  }
-                }}
-              />
-            </div>
-
-            {/* Dark bottom badge offset */}
-            <div className="dark-offset-badge">
-              <div className="offset-label-block">
-                <span style={{ fontSize: '16px' }}>🍃</span>
-                <span className="offset-name">Net Carbon Offset</span>
-              </div>
-              <span className="offset-value">101,850,000 Ton Co2e</span>
+          {/* Earth 3D map overlay */}
+          <div className="earth-3d-overlay">
+            <div className="earth-3d-bg">
+              <div className="earth-3d-globe"></div>
+              <div className="earth-3d-title">3D Map</div>
+              <div className="earth-3d-logo">IQAir Earth</div>
             </div>
           </div>
         </div>
       </div>
 
-      {/* Right Details Panel */}
+      {/* Right Details Panel (Preserved) */}
       <div className="right-panel">
         {selectedWard ? (
           <div className="card" style={{ padding: '20px', background: '#ffffff', borderRadius: '12px', border: '1px solid var(--border)', minHeight: '400px' }}>
