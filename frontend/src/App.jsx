@@ -1884,31 +1884,6 @@ function CommandCenter({ state, selectedWard, onSelectWard, mapStyle, setMapStyl
                       </div>
                     ))}
                   </div>
-
-                  {/* Analyze button */}
-                  <button
-                    onClick={() => setTab && setTab('attribution')}
-                    style={{
-                      width: '100%',
-                      marginTop: '14px',
-                      padding: '9px 0',
-                      borderRadius: '10px',
-                      border: '1px solid #e2e8f0',
-                      background: 'linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%)',
-                      color: '#475569',
-                      fontSize: '12px',
-                      fontWeight: '700',
-                      cursor: 'pointer',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      gap: '6px',
-                      transition: 'all 0.15s ease'
-                    }}
-                  >
-                    <Search size={13} />
-                    <span>Deep Source Analysis →</span>
-                  </button>
                 </div>
               );
             })()}
