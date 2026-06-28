@@ -24,6 +24,9 @@ COPY --from=frontend-builder /app/frontend/dist ./frontend/dist
 # Copy backend files
 COPY backend ./backend
 
+# Copy .env for API keys (WAQI, OpenAQ, Resend)
+COPY .env ./.env
+
 # Hugging Face Spaces default port is 7860
 EXPOSE 7860
 
