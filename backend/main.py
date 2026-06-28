@@ -19,7 +19,7 @@ import uuid
 from typing import Optional
 from datetime import datetime, timezone
 import httpx
-from fastapi import FastAPI, Query, HTTPException
+from fastapi import FastAPI, Query, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, RedirectResponse
@@ -593,6 +593,7 @@ async def run_advisory(
 
 @app.post("/api/advisory/subscribe")
 async def subscribe_advisory(
+    request: Request,
     ward_id: str = Query(...),
     profile: str = Query(default="healthy_adult"),
     email: str = Query(...),
@@ -625,8 +626,10 @@ async def subscribe_advisory(
 
     # Send confirmation email
     city_name = CITIES.get(ward_id, {}).get("name", ward_id.capitalize())
-    # Generate relative confirmation link for the browser client to target
-    confirm_url = f"/api/advisory/confirm?token={token}"
+    
+    # Generate absolute confirmation link dynamically from the request host
+    base_url = str(request.base_url).rstrip("/")
+    confirm_url = f"{base_url}/api/advisory/confirm?token={token}"
     
     # Check for Resend API key
     resend_key = os.environ.get("RESEND_API_KEY") or _get_resend_key_from_env_file()
@@ -649,18 +652,18 @@ async def subscribe_advisory(
         try:
             import resend
             resend.api_key = resend_key
-            resend.Emails.send({
+            result = resend.Emails.send({
                 "from": from_email,
                 "to": email,
                 "subject": subject,
                 "html": html_body
             })
-            print(f"Confirmation email successfully sent to {email}")
+            print(f"Confirmation email successfully sent to {email} | Resend ID: {result}")
         except Exception as e:
-            print("Resend failed to send confirmation:", e)
+            print(f"Resend failed to send confirmation to {email}: {type(e).__name__}: {e}")
     else:
         # Development Console simulation fallback
-        print(f"[CONSOLE EMAIL SIMULATION] To: {email} | Subject: {subject} | Confirm Link: {confirm_url}")
+        print(f"[CONSOLE EMAIL SIMULATION] No RESEND_API_KEY found. To: {email} | Subject: {subject} | Confirm Link: {confirm_url}")
 
     return {"status": "success", "message": "Verification email sent. Please check your inbox to confirm."}
 
