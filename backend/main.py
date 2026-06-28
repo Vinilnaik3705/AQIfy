@@ -57,9 +57,8 @@ def init_db():
 
 def _get_resend_key() -> Optional[str]:
     """Get Resend API key — checks multiple environment variable names for compatibility."""
-    # Check standard name first, then HF Spaces secret name 'Resend'
     return (
-        _get_resend_key() or
+        os.environ.get("RESEND_API_KEY") or
         os.environ.get("Resend") or
         os.environ.get("RESEND") or
         None
