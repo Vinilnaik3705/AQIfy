@@ -641,6 +641,8 @@ function MapLayersControl() {
           attribution="&copy; CARTO"
           url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
           noWrap={true}
+          updateWhenIdle={true}
+          keepBuffer={6}
         />
       </LayersControl.BaseLayer>
       <LayersControl.BaseLayer name="Voyager Street Map">
@@ -648,6 +650,8 @@ function MapLayersControl() {
           attribution="&copy; CARTO &copy; OpenStreetMap"
           url="https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png"
           noWrap={true}
+          updateWhenIdle={true}
+          keepBuffer={6}
         />
       </LayersControl.BaseLayer>
       <LayersControl.BaseLayer name="Satellite View">
@@ -655,13 +659,15 @@ function MapLayersControl() {
           attribution="&copy; Google Maps"
           url="https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}"
           noWrap={true}
+          updateWhenIdle={true}
+          keepBuffer={6}
         />
       </LayersControl.BaseLayer>
 
       <LayersControl.Overlay name="NASA Active Fires (GIBS)">
         <WMSTileLayer
           url="https://gibs.earthdata.nasa.gov/wms/epsg3857/best/wms.cgi"
-          layers="VIIRS_SNPP_Thermal_Anomalies_375m_All,MODIS_Aqua_Thermal_Anomalies_All,MODIS_Terra_Thermal_Anomalies_All"
+          layers="VIIRS_SNPP_Thermal_Anomalies_375m_All"
           format="image/png"
           transparent={true}
           attribution="NASA GIBS / FIRMS"
@@ -1236,6 +1242,8 @@ function CommandCenter({ state, selectedWard, onSelectWard, mapStyle, setMapStyl
               attribution="&copy; CARTO"
               url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
               noWrap={true}
+              updateWhenIdle={true}
+              keepBuffer={6}
             />
 
             {/* Preset City Markers (Toggled by Stations) */}
@@ -1297,7 +1305,7 @@ function CommandCenter({ state, selectedWard, onSelectWard, mapStyle, setMapStyl
             {showFires && (
               <WMSTileLayer
                 url="https://gibs.earthdata.nasa.gov/wms/epsg3857/best/wms.cgi"
-                layers="VIIRS_SNPP_Thermal_Anomalies_375m_All,MODIS_Aqua_Thermal_Anomalies_All,MODIS_Terra_Thermal_Anomalies_All"
+                layers="VIIRS_SNPP_Thermal_Anomalies_375m_All"
                 format="image/png"
                 transparent={true}
                 attribution="NASA GIBS / FIRMS"
@@ -1332,7 +1340,7 @@ function CommandCenter({ state, selectedWard, onSelectWard, mapStyle, setMapStyl
                     <div style={{ color: '#0f172a', fontSize: '12px' }}>
                       <strong style={{ fontSize: '13px', display: 'inline-flex', alignItems: 'center' }}>{SOURCE_ICONS[src.category] || <MapPin size={13} color="#64748b" style={{ marginRight: '4px' }} />} {src.name}</strong><br />
                       Category: <span style={{ textTransform: 'capitalize', fontWeight: '600' }}>{src.label || src.category}</span><br />
-                      Emission Rate: <strong>{src.emission_rate_Q} g/s</strong>
+                      Emission Rate: <strong>{src.Q ?? src.emission_rate_Q ?? 0} g/s</strong>
                     </div>
                   </Popup>
                 </CircleMarker>
@@ -1820,6 +1828,44 @@ function CommandCenter({ state, selectedWard, onSelectWard, mapStyle, setMapStyl
                 ].sort((a,b) => b.pct - a.pct);
               };
 
+              const getRealSources = (ward) => {
+                if (!ward || !state.sources) return getSeededSources(ward?.name || 'Default');
+                const localSources = state.sources.filter(src => {
+                  if (!src.location || !ward.center) return false;
+                  const dLat = src.location[0] - ward.center[0];
+                  const dLng = src.location[1] - ward.center[1];
+                  const dist = Math.sqrt(dLat * dLat + dLng * dLng) * 111;
+                  return dist <= 25; // 25km radius
+                });
+                if (localSources.length === 0) {
+                  return getSeededSources(ward.name);
+                }
+                const sums = { industrial: 0, vehicular: 0, construction: 0, waste_burning: 0, background: 0 };
+                let totalQ = 0;
+                localSources.forEach(src => {
+                  const cat = src.category || 'background';
+                  const q = src.Q ?? src.emission_rate_Q ?? 0;
+                  if (sums[cat] !== undefined) {
+                    sums[cat] += q;
+                    totalQ += q;
+                  }
+                });
+                if (totalQ === 0) {
+                  sums.background = 15;
+                  totalQ = 15;
+                } else {
+                  sums.background = totalQ * 0.12;
+                  totalQ += sums.background;
+                }
+                return [
+                  { label: 'Industrial', pct: Math.round((sums.industrial / totalQ) * 100), color: '#ef4444', icon: <Factory size={12} color="#ef4444" /> },
+                  { label: 'Vehicular', pct: Math.round((sums.vehicular / totalQ) * 100), color: '#3b82f6', icon: <Car size={12} color="#3b82f6" /> },
+                  { label: 'Construction', pct: Math.round((sums.construction / totalQ) * 100), color: '#f59e0b', icon: <Hammer size={12} color="#f59e0b" /> },
+                  { label: 'Waste Burning', pct: Math.round((sums.waste_burning / totalQ) * 100), color: '#10b981', icon: <Flame size={12} color="#10b981" /> },
+                  { label: 'Background', pct: Math.round((sums.background / totalQ) * 100), color: '#64748b', icon: <Leaf size={12} color="#64748b" /> },
+                ].sort((a,b) => b.pct - a.pct);
+              };
+
               const displaySources = (attribution && attribution.sources) ? attribution.sources.map(s => {
                 const category = s.category || s.label?.toLowerCase() || 'background';
                 return {
@@ -1832,7 +1878,7 @@ function CommandCenter({ state, selectedWard, onSelectWard, mapStyle, setMapStyl
                         category === 'waste_burning' ? <Flame size={12} color="#10b981" /> :
                         <Leaf size={12} color="#64748b" />
                 };
-              }).sort((a,b) => b.pct - a.pct) : getSeededSources(selectedWard?.name || 'Default');
+              }).sort((a,b) => b.pct - a.pct) : getRealSources(selectedWard);
 
               return (
                 <div style={{ borderTop: '1px solid var(--border)', paddingTop: '16px', marginTop: '4px' }}>
@@ -2576,9 +2622,9 @@ function AttributionView({ state, attribution, loading, onClickLocation, mapStyl
                             <span style={{ fontSize: '11px', color: '#64748b' }}>
                               Distance: {src.distance_km} km
                             </span>
-                            {src.emission_rate_Q > 0 && (
+                            {(src.Q ?? src.emission_rate_Q ?? 0) > 0 && (
                               <span style={{ fontSize: '11px', color: '#64748b' }}>
-                                Emission: {src.emission_rate_Q} g/s
+                                Emission: {src.Q ?? src.emission_rate_Q} g/s
                               </span>
                             )}
                             {src.stack_height_m > 0 && (
