@@ -738,11 +738,8 @@ function AqiGauge({ aqi }) {
   ];
 
   const buildArc = (startAngle, endAngle) => {
-    const gap = 1.2; // Small visual spacing between segments
-    const s = startAngle - gap;
-    const e = endAngle + gap;
-    const [x1, y1] = arcPoint(s);
-    const [x2, y2] = arcPoint(e);
+    const [x1, y1] = arcPoint(startAngle);
+    const [x2, y2] = arcPoint(endAngle);
     return `M ${x1.toFixed(2)} ${y1.toFixed(2)} A ${r} ${r} 0 0 1 ${x2.toFixed(2)} ${y2.toFixed(2)}`;
   };
 
