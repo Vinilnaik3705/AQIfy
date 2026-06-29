@@ -14,6 +14,9 @@ if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
 import os
+from dotenv import load_dotenv
+load_dotenv()
+
 import sqlite3
 import uuid
 from typing import Optional
@@ -540,7 +543,7 @@ async def run_advisory(
             "vulnerable": {"hospitals": 1, "schools": 2, "elderly_pct": 10}
         }
         sources = get_sources_for_city(nearest_city)
-        return advisory_agent.run(
+        return await advisory_agent.run(
             ward, avg_aqi, lang,
             pollutants=avg_pollutants,
             weather=weather,
@@ -584,7 +587,7 @@ async def run_advisory(
     weather = city_state.get("weather", {})
     sources = city_state.get("sources", [])
     
-    return advisory_agent.run(
+    return await advisory_agent.run(
         ward, avg_aqi, lang, 
         pollutants=avg_pollutants, 
         weather=weather, 

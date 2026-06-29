@@ -3183,7 +3183,23 @@ function CitizensAdvisoryPopup({
   }
 
   const aqiValue = advisory ? advisory.aqi : 0;
-  const pct = Math.min((aqiValue / 500) * 100, 100);
+  let pct = 0;
+  if (aqiValue <= 50) {
+    pct = (aqiValue / 50) * 16.67;
+  } else if (aqiValue <= 100) {
+    pct = 16.67 + ((aqiValue - 50) / 50) * 16.67;
+  } else if (aqiValue <= 200) {
+    pct = 33.33 + ((aqiValue - 100) / 100) * 16.67;
+  } else if (aqiValue <= 300) {
+    pct = 50.0 + ((aqiValue - 200) / 100) * 16.67;
+  } else if (aqiValue <= 400) {
+    pct = 66.67 + ((aqiValue - 300) / 100) * 16.67;
+  } else if (aqiValue <= 500) {
+    pct = 83.33 + ((aqiValue - 400) / 100) * 16.67;
+  } else {
+    pct = 100;
+  }
+
 
   return (
     <div className="advisory-widget-container">

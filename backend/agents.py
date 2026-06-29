@@ -745,7 +745,7 @@ class AdvisoryAgent:
         }
     }
 
-    def run(
+    async def run(
         self,
         ward: Dict[str, Any],
         aqi: float,
@@ -757,6 +757,100 @@ class AdvisoryAgent:
     ) -> Dict[str, Any]:
         level = self._aqi_level(aqi)
 
+        # Attempt to use Gemini LLM for dynamic multi-lingual advisory generation if key is provided
+        import os
+        import json
+        import httpx
+
+        gemini_api_key = os.environ.get("GEMINI_API_KEY")
+        if gemini_api_key:
+            try:
+                lang_names = {
+                    "en": "English",
+                    "hi": "Hindi",
+                    "kn": "Kannada",
+                    "ta": "Tamil",
+                    "te": "Telugu"
+                }
+                lang_name = lang_names.get(lang, "English")
+                level_label = level.replace("_", " ").upper()
+                
+                dominant = "PM2.5"
+                if pollutants:
+                    ratios = {
+                        "PM2.5": pollutants.get("pm25", 0) / 60.0,
+                        "PM10": pollutants.get("pm10", 0) / 100.0,
+                        "NO₂": pollutants.get("no2", 0) / 80.0,
+                        "SO₂": pollutants.get("so2", 0) / 80.0,
+                        "CO": pollutants.get("co", 0) / 2.0,
+                        "O₃": pollutants.get("o3", 0) / 100.0
+                    }
+                    dominant = max(ratios, key=ratios.get)
+
+                ws_kmh = weather.get("wind_speed_kmh") if weather else None
+                stagnant_str = "yes" if (ws_kmh is not None and ws_kmh < 8.0) else "no"
+
+                nearby_names = []
+                if sources and "center" in ward:
+                    for s in sources:
+                        dist = _haversine(ward["center"][0], ward["center"][1], s["location"][0], s["location"][1])
+                        if dist < 6.0:
+                            nearby_names.append(s["name"])
+
+                prompt = f"""You are the Air Quality Advisory Agent. Generate a localized health advisory and precaution list in the language '{lang_name}' (language code: '{lang}') for a citizen with the profile '{profile}' in ward '{ward["name"]}'.
+Current conditions:
+- AQI: {aqi} ({level_label})
+- Dominant pollutant: {dominant}
+- Weather: Temperature {weather.get('temperature_c') if weather else 'N/A'}°C, Wind speed {ws_kmh if ws_kmh is not None else 'N/A'} km/h
+- Is wind stagnant (preventing dispersion): {stagnant_str}
+- Nearby emission sources: {', '.join(nearby_names[:3]) if nearby_names else 'None'}
+
+Format your output EXACTLY as a JSON object with these keys:
+"advisory": "<A concise, warning or reassuring citizen health advisory in {lang_name} based on the AQI level and user profile. Length: 1-2 sentences>"
+"reason": "<A brief explanation in {lang_name} of why the AQI is at this level (mentioning dominant pollutant, wind/weather conditions, or nearby emission sources if relevant). Length: 1-2 sentences>"
+"precautions": ["<Precaution 1 in {lang_name}>", "<Precaution 2 in {lang_name}>", "<Precaution 3 in {lang_name}>"]
+"health_tip": "<One short actionable health tip in {lang_name}>"
+
+IMPORTANT: Return ONLY the raw JSON object. Do not wrap it in markdown block quotes or include backticks like ```json."""
+
+                url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={gemini_api_key}"
+                headers = {"Content-Type": "application/json"}
+                payload = {
+                    "contents": [{
+                        "parts": [{"text": prompt}]
+                    }]
+                }
+
+                async with httpx.AsyncClient(timeout=10.0) as client:
+                    resp = await client.post(url, json=payload, headers=headers)
+                    if resp.status_code == 200:
+                        res_data = resp.json()
+                        text_response = res_data["candidates"][0]["content"]["parts"][0]["text"].strip()
+                        if text_response.startswith("```"):
+                            text_response = text_response.split("```")[1]
+                            if text_response.startswith("json"):
+                                text_response = text_response[4:]
+                        text_response = text_response.strip()
+                        
+                        parsed = json.loads(text_response)
+                        return {
+                            "ward_id": ward["id"],
+                            "ward_name": ward["name"],
+                            "aqi": aqi,
+                            "level": level,
+                            "language": self.LANGUAGES.get(lang, "English"),
+                            "language_code": lang,
+                            "advisory": parsed["advisory"],
+                            "reason": parsed["reason"],
+                            "precautions": parsed["precautions"],
+                            "health_tip": parsed["health_tip"],
+                            "vulnerable_info": ward.get("vulnerable", {}),
+                            "generated_at": datetime.now(timezone.utc).isoformat(),
+                        }
+            except Exception as e:
+                print(f"Gemini API Error, falling back to static advisory: {e}")
+
+        # Fallback static logic
         lang_key = lang if lang in self.PROFILE_ADVISORIES else "en"
         profile_key = profile if profile in self.PROFILE_ADVISORIES[lang_key][level] else "healthy_adult"
 
