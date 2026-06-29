@@ -9,6 +9,7 @@ Falls back to estimation only when the API is unreachable.
 from __future__ import annotations
 
 import os
+import asyncio
 import math
 import random
 import time
