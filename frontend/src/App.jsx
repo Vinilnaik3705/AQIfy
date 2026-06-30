@@ -2745,7 +2745,7 @@ function AttributionView({ state, attribution, loading, onClickLocation, mapStyl
 /* ── Enforcement View ──────────────────────────────────────────────────── */
 
 function EnforcementView({ dispatches, onRefresh, onViewEvidence }) {
-  const [selectedHotspotIndex, setSelectedHotspotIndex] = useState(0)
+  const [selectedIndex, setSelectedIndex] = useState(0)
   const [scanning, setScanning] = useState(false)
 
   const handleRescan = async () => {
@@ -2754,437 +2754,224 @@ function EnforcementView({ dispatches, onRefresh, onViewEvidence }) {
     setTimeout(() => setScanning(false), 1800)
   }
 
-  // Hotspots correlated with emission sources satisfying the constraints:
-  // Correlates hotspot data with registered emission sources: industries, construction sites, waste burning locations, diesel fleet movement
-  const hotspots = [
-    { 
-      ward_name: "Wazirpur Industrial Area", 
-      aqi: 340, 
-      dominant_pollutant: "PM2.5", 
-      severity: "severe", 
-      location: [28.6912, 77.1624],
-      source_name: "Delhi Industrial Cluster #4",
-      source_category: "industrial",
-      distance_km: 1.2,
-      confidence: 94,
-      coordinates: "28.7011, 77.1534",
-      source_impact: "High stack emissions from textile coal boilers.",
-      wind_direction: 210, 
-      wind_speed: "16 km/h"
-    },
-    { 
-      ward_name: "Anand Vihar Transport Hub", 
-      aqi: 285, 
-      dominant_pollutant: "NO2", 
-      severity: "very_poor", 
-      location: [28.6508, 77.3112],
-      source_name: "Inner Ring Road Diesel Fleet",
-      source_category: "vehicular",
-      distance_km: 0.8,
-      confidence: 91,
-      coordinates: "28.6412, 77.2981",
-      source_impact: "High volume of heavy commercial diesel vehicles.",
-      wind_direction: 232, 
-      wind_speed: "14 km/h"
-    },
-    { 
-      ward_name: "Okhla Phase 3 Construction", 
-      aqi: 240, 
-      dominant_pollutant: "PM10", 
-      severity: "poor", 
-      location: [28.5358, 77.2718],
-      source_name: "Sector 62 Construction Project",
-      source_category: "construction",
-      distance_km: 2.1,
-      confidence: 86,
-      coordinates: "28.6345, 77.3421",
-      source_impact: "Dry sand excavation without dust curtains.",
-      wind_direction: 180, 
-      wind_speed: "10 km/h"
-    },
-    { 
-      ward_name: "Ghazipur Border Landfill", 
-      aqi: 380, 
-      dominant_pollutant: "PM2.5", 
-      severity: "severe", 
-      location: [28.6235, 77.3292],
-      source_name: "Ghazipur Landfill Smolder Site",
-      source_category: "waste_burning",
-      distance_km: 0.4,
-      confidence: 97,
-      coordinates: "28.6231, 77.3278",
-      source_impact: "Open methane-driven waste combustion.",
-      wind_direction: 270, 
-      wind_speed: "18 km/h"
-    }
-  ]
+  // Use REAL dispatch data from backend EnforcementAgent (only shows AQI >= 201 i.e. poor+)
+  const allDispatches = dispatches?.dispatches || []
 
-  const activeHotspot = hotspots[selectedHotspotIndex] || hotspots[0]
+  // Sort by state name (extracted from ward_name which is formatted as "WardName (CityKey)")
+  const sortedDispatches = [...allDispatches].sort((a, b) => {
+    const stateA = (a.ward_name || '').toLowerCase()
+    const stateB = (b.ward_name || '').toLowerCase()
+    return stateA.localeCompare(stateB)
+  })
 
-  const getActionRecommendation = (cat, name) => {
-    switch (cat) {
-      case 'industrial':
-        return {
-          title: "Temporary Stack Shutdown & Compliance Audit",
-          authority: "Delhi Pollution Control Committee (DPCC)",
-          steps: [
-            `Issue immediate cease-and-desist order to ${name}.`,
-            "Conduct physical audit of electrostatic precipitators (ESP).",
-            "Mandate online continuous emission monitoring (OCEMS) recalibration."
-          ],
-          evidence: "Exhaust opacity reading > 45% (Limit: 20%)"
-        }
-      case 'construction':
-        return {
-          title: "Enforce Dust Ban & Water Sprinkler Deployment",
-          authority: "Municipal Corporation of Delhi (MCD)",
-          steps: [
-            `Impose heavy fines under GRAP Phase 2 for ${name}.`,
-            "Halt all dry excavation activities until wind speed drops.",
-            "Deploy 3 vehicle-mounted mist cannons to spray water downwind."
-          ],
-          evidence: "Fugitive PM10 count at project boundary exceeding 400µg/m³"
-        }
-      case 'waste_burning':
-        return {
-          title: "Emergency Smolder Suppression & Watchtower Patrols",
-          authority: "MCD Sanitation Command & Fire Dept",
-          steps: [
-            "Dispatch municipal water tankers for fire containment.",
-            "Enforce landfill security to prevent unauthorized access.",
-            "Use thermal imaging drones to identify internal compost fires."
-          ],
-          evidence: "Satellite thermal hotspot at landfill grid coords"
-        }
-      case 'vehicular':
-      default:
-        return {
-          title: "Heavy Cargo Diversion & Mobile Emission Checkpoints",
-          authority: "Delhi Traffic Police Command Center",
-          steps: [
-            "Divert heavy diesel commercial vehicles to Outer Ring Road.",
-            "Deploy 4 mobile PUC check teams at boundary crossings.",
-            "Activate high-efficiency vacuum road sweeping machines."
-          ],
-          evidence: "Nitrogen dioxide (NO2) sensor levels exceed 180µg/m³"
-        }
-    }
-  }
-
-  const recommendation = getActionRecommendation(activeHotspot.source_category, activeHotspot.source_name)
-
-  const getCategoryIcon = (cat) => {
-    switch (cat) {
-      case 'industrial': return <Factory size={16} color="#8b5cf6" />
-      case 'construction': return <Hammer size={16} color="#f59e0b" />
-      case 'waste_burning': return <Flame size={16} color="#ef4444" />
-      case 'vehicular':
-      default:
-        return <Car size={16} color="#3b82f6" />
-    }
-  }
+  const activeItem = sortedDispatches[selectedIndex] || null
 
   const getSeverityBadge = (sev) => {
-    if (sev === 'severe') return <span className="telemetry-badge-high">Severe</span>
-    if (sev === 'very_poor') return <span className="telemetry-badge-med" style={{ background: '#fff7ed', color: '#ea580c', border: '1px solid #ffedd5' }}>Very Poor</span>
-    return <span className="telemetry-badge-med">Poor</span>
+    if (sev === 'severe') return <span style={{ background: '#fef2f2', color: '#ef4444', border: '1px solid #fee2e2', borderRadius: '6px', padding: '2px 8px', fontSize: '11px', fontWeight: '700' }}>Severe</span>
+    if (sev === 'very_poor') return <span style={{ background: '#fff7ed', color: '#ea580c', border: '1px solid #ffedd5', borderRadius: '6px', padding: '2px 8px', fontSize: '11px', fontWeight: '700' }}>Very Poor</span>
+    return <span style={{ background: '#fffbeb', color: '#d97706', border: '1px solid #fef3c7', borderRadius: '6px', padding: '2px 8px', fontSize: '11px', fontWeight: '700' }}>Poor</span>
   }
 
   return (
     <div style={{ padding: '0', marginTop: '16px' }}>
       
-      {/* Top Telemetry Header Row */}
-      <div style={{
-        background: '#ffffff',
-        borderRadius: '16px',
-        border: '1.5px solid #f1f5f9',
-        padding: '14px 20px',
-        display: 'flex',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        marginBottom: '20px',
-        boxShadow: '0 4px 20px rgba(15, 23, 42, 0.02)'
-      }}>
-        <div>
-          <div style={{ fontSize: '10px', color: '#94a3b8', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.5px' }}>TELEMETRY HUB</div>
-          <div style={{ fontSize: '15px', fontWeight: '800', color: '#0f172a', marginTop: '4px' }}>#DELHI-ENFORCE-2026</div>
-        </div>
-        <div style={{ height: '24px', width: '1px', background: '#cbd5e1' }} />
-        
-        <div>
-          <div style={{ fontSize: '10px', color: '#94a3b8', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.5px' }}>MONITOR SYSTEM</div>
-          <div style={{ fontSize: '15px', fontWeight: '800', color: '#0f172a', marginTop: '4px' }}>37 Wards Mapped</div>
-        </div>
-        <div style={{ height: '24px', width: '1px', background: '#cbd5e1' }} />
-
-        <div>
-          <div style={{ fontSize: '10px', color: '#94a3b8', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.5px' }}>CORRELATION ENGINE</div>
-          <div style={{ fontSize: '15px', fontWeight: '800', color: '#3b82f6', marginTop: '4px' }}>AI Prioritisation v1.4</div>
-        </div>
-        <div style={{ height: '24px', width: '1px', background: '#cbd5e1' }} />
-
-        <div>
-          <div style={{ fontSize: '10px', color: '#94a3b8', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.5px' }}>INTERVENTION MODEL</div>
-          <div style={{ fontSize: '15px', fontWeight: '800', color: '#0f172a', marginTop: '4px' }}>GRAP Phase 2 Active</div>
-        </div>
-        <div style={{ height: '24px', width: '1px', background: '#cbd5e1' }} />
-
-        <div>
-          <div style={{ fontSize: '10px', color: '#94a3b8', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.5px' }}>SCAN STATUS</div>
-          <div style={{ fontSize: '15px', fontWeight: '800', color: '#10b981', marginTop: '4px', display: 'flex', alignItems: 'center', gap: '5px' }}>
-            <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#10b981', display: 'inline-block' }} />
-            COMPLIANT
-          </div>
-        </div>
-      </div>
-
-      {/* Main Grid Layout */}
+      {/* Main 2-column layout */}
       <div className="telemetry-grid">
         
-        {/* Left Column */}
+        {/* LEFT: Pollution Hotspots List */}
         <div className="telemetry-column-left">
-          
-          {/* Geospatial Correlation Core Radar */}
-          <div className="telemetry-card" style={{ paddingBottom: '24px' }}>
-            <div className="telemetry-card-title">
-              <span>Geospatial Correlation Core</span>
-              <span style={{ fontSize: '11px', color: '#94a3b8', fontWeight: '500' }}>Active Scanning</span>
-            </div>
-            
-            <div className="telemetry-radar-container">
-              <div className="telemetry-radar-disk">
-                <div className="telemetry-radar-sweep" />
-                <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#3b82f6', zIndex: 2 }} />
-                <div style={{ position: 'absolute', width: '120px', height: '120px', borderRadius: '50%', border: '1px dashed rgba(59, 130, 246, 0.1)' }} />
-                <div style={{ position: 'absolute', width: '60px', height: '60px', borderRadius: '50%', border: '1px dashed rgba(59, 130, 246, 0.1)' }} />
-                
-                <div 
-                  className="telemetry-radar-ping" 
-                  style={{
-                    top: `${40 + (selectedHotspotIndex * 22) % 90}px`,
-                    left: `${50 + (selectedHotspotIndex * 31) % 90}px`
-                  }} 
-                />
-              </div>
-            </div>
-            
-            <div style={{ textAlign: 'center', marginBottom: '16px' }}>
-              <div style={{ fontSize: '20px', fontWeight: '850', color: '#0f172a' }}>{activeHotspot.confidence}%</div>
-              <div style={{ fontSize: '10px', color: '#64748b', fontWeight: '700', textTransform: 'uppercase', marginTop: '2px' }}>Correlation Index Accuracy</div>
-            </div>
-
-            <div className="telemetry-stats-row">
-              <div className="telemetry-mini-card">
-                <div className="telemetry-mini-label">Scan Radius</div>
-                <div className="telemetry-mini-val">3.5 km</div>
-              </div>
-              <div className="telemetry-mini-card">
-                <div className="telemetry-mini-label">Scan Power</div>
-                <div className="telemetry-mini-val">78.5%</div>
-              </div>
-            </div>
-          </div>
-
-          {/* Overview Stats */}
-          <div className="telemetry-card">
-            <div className="telemetry-card-title">Overview Stats</div>
-            <div className="telemetry-stats-row" style={{ marginBottom: '16px' }}>
-              <div className="telemetry-mini-card">
-                <div className="telemetry-mini-label">Operational Hours</div>
-                <div className="telemetry-mini-val">24 hrs</div>
-              </div>
-              <div className="telemetry-mini-card">
-                <div className="telemetry-mini-label">Average Response</div>
-                <div className="telemetry-mini-val">1h 15m</div>
-              </div>
-            </div>
-            
-            <div style={{ display: 'flex', alignItems: 'center', gap: '16px', background: '#f8fafc', padding: '12px 16px', borderRadius: '12px', border: '1px solid #f1f5f9' }}>
-              <div style={{ position: 'relative', width: '50px', height: '50px' }}>
-                <svg width="50" height="50" viewBox="0 0 36 36">
-                  <circle cx="18" cy="18" r="15.915" fill="none" stroke="#e2e8f0" strokeWidth="3" />
-                  <circle cx="18" cy="18" r="15.915" fill="none" stroke="#10b981" strokeWidth="3" strokeDasharray="94.2 5.8" strokeDashoffset="25" />
-                </svg>
-                <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', fontSize: '11px', fontWeight: '800', color: '#10b981' }}>94%</div>
-              </div>
-              <div>
-                <div style={{ fontSize: '12px', fontWeight: '750', color: '#0f172a' }}>System Dispatch Efficiency</div>
-                <div style={{ fontSize: '11px', color: '#64748b', marginTop: '2px' }}>Correlated actions successfully dispatched.</div>
-              </div>
-            </div>
-          </div>
-
-        </div>
-
-        {/* Right Column */}
-        <div className="telemetry-column-right">
-          
-          {/* Correlation Matrix List */}
-          <div className="telemetry-card">
-            <div className="telemetry-card-title">
-              <span>Hotspot &amp; Source Correlation Matrix</span>
+          <div className="telemetry-card" style={{ paddingBottom: '16px' }}>
+            <div className="telemetry-card-title" style={{ marginBottom: '14px' }}>
+              <span style={{ fontSize: '16px' }}>Pollution Hotspots</span>
               <button
                 onClick={handleRescan}
                 disabled={scanning}
                 style={{
-                  background: scanning ? '#e2e8f0' : '#3b82f6',
+                  background: scanning ? '#e2e8f0' : '#1e3a8a',
                   color: scanning ? '#94a3b8' : '#ffffff',
                   border: 'none',
-                  borderRadius: '6px',
-                  padding: '4px 10px',
+                  borderRadius: '10px',
+                  padding: '10px 22px',
                   cursor: scanning ? 'not-allowed' : 'pointer',
-                  fontSize: '11px',
+                  fontSize: '13px',
                   fontWeight: '700',
                   display: 'flex',
                   alignItems: 'center',
-                  gap: '4px'
+                  gap: '6px',
+                  boxShadow: scanning ? 'none' : '0 2px 8px rgba(30, 58, 138, 0.2)',
+                  transition: 'all 0.2s'
                 }}
               >
-                <RefreshCw size={11} style={{ animation: scanning ? 'spin 1s linear infinite' : 'none' }} />
+                <RefreshCw size={14} style={{ animation: scanning ? 'spin 1s linear infinite' : 'none' }} />
                 {scanning ? 'Scanning...' : 'Scan Now'}
               </button>
             </div>
             
-            <div className="telemetry-list">
-              {hotspots.map((item, idx) => (
-                <div 
-                  key={idx} 
-                  onClick={() => setSelectedHotspotIndex(idx)}
-                  className="telemetry-list-item"
-                  style={{
-                    cursor: 'pointer',
-                    border: selectedHotspotIndex === idx ? '1.5px solid #3b82f6' : '1px solid #f1f5f9',
-                    background: selectedHotspotIndex === idx ? '#f0f7ff' : '#f8fafc'
-                  }}
-                >
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                    {getCategoryIcon(item.source_category)}
+            {sortedDispatches.length > 0 ? (
+              <div className="telemetry-list" style={{ maxHeight: '500px', overflowY: 'auto' }}>
+                {sortedDispatches.map((item, idx) => (
+                  <div 
+                    key={idx} 
+                    onClick={() => setSelectedIndex(idx)}
+                    className="telemetry-list-item"
+                    style={{
+                      cursor: 'pointer',
+                      border: selectedIndex === idx ? '1.5px solid #3b82f6' : '1px solid #f1f5f9',
+                      background: selectedIndex === idx ? '#f0f7ff' : '#f8fafc'
+                    }}
+                  >
                     <div>
                       <div style={{ fontSize: '13px', fontWeight: '750', color: '#0f172a' }}>{item.ward_name}</div>
                       <div style={{ fontSize: '11px', color: '#64748b', marginTop: '2px' }}>
-                        Source: {item.source_name} ({item.distance_km}km)
+                        Dominant: {item.dominant_pollutant}
                       </div>
                     </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                      {getSeverityBadge(item.severity)}
+                      <span style={{ fontSize: '14px', fontWeight: '850', color: '#0f172a' }}>{Math.round(item.aqi)} AQI</span>
+                    </div>
                   </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                    {getSeverityBadge(item.severity)}
-                    <span style={{ fontSize: '14px', fontWeight: '850', color: '#0f172a' }}>{item.aqi} AQI</span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Action Recommendations and Dispersion Compass */}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
-            
-            {/* Action Card */}
-            <div className="telemetry-card" style={{ display: 'flex', flexDirection: 'column' }}>
-              <div className="telemetry-card-title" style={{ marginBottom: '8px' }}>
-                <span>Prioritised Action</span>
-                <span style={{ fontSize: '10px', background: '#eff6ff', color: '#2563eb', padding: '1px 6px', borderRadius: '4px', fontWeight: '700' }}>AI SUGGESTION</span>
-              </div>
-              
-              <div style={{ fontSize: '11px', color: '#94a3b8', textTransform: 'uppercase', fontWeight: '700', letterSpacing: '0.5px' }}>Command Authority</div>
-              <div style={{ fontSize: '12px', fontWeight: '750', color: '#0f172a', marginTop: '2px', marginBottom: '8px' }}>{recommendation.authority}</div>
-
-              <div style={{ fontSize: '11px', color: '#94a3b8', textTransform: 'uppercase', fontWeight: '700', letterSpacing: '0.5px' }}>Action Recommendation</div>
-              <div style={{ fontSize: '13px', fontWeight: '800', color: '#2563eb', marginTop: '2px', marginBottom: '10px' }}>{recommendation.title}</div>
-              
-              <ul style={{ paddingLeft: '16px', margin: '0 0 14px 0', fontSize: '11.5px', color: '#475569', lineHeight: '1.4' }}>
-                {recommendation.steps.map((step, sIdx) => (
-                  <li key={sIdx} style={{ marginBottom: '4px' }}>{step}</li>
                 ))}
-              </ul>
-
-              <div style={{ marginTop: 'auto', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', paddingTop: '10px', borderTop: '1.5px solid #f1f5f9' }}>
-                <span style={{ fontSize: '10px', color: '#64748b', textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap', maxWidth: '120px' }}>
-                  Evid: <strong>{recommendation.evidence}</strong>
-                </span>
-                <button
-                  onClick={() => onViewEvidence({
-                    ward_name: activeHotspot.ward_name,
-                    aqi: activeHotspot.aqi,
-                    location: activeHotspot.location,
-                    severity: activeHotspot.severity,
-                    priority_score: activeHotspot.aqi * 1.5,
-                    evidence: {
-                      timestamp: new Date().toISOString(),
-                      pollutants: {
-                        pm25: activeHotspot.dominant_pollutant === 'PM2.5' ? activeHotspot.aqi / 2 : 12,
-                        pm10: activeHotspot.dominant_pollutant === 'PM10' ? activeHotspot.aqi : 45,
-                        no2: activeHotspot.dominant_pollutant === 'NO2' ? activeHotspot.aqi / 4 : 18
-                      }
-                    },
-                    inferred_sources: [activeHotspot.source_category],
-                    nearby_sources: [
-                      {
-                        name: activeHotspot.source_name,
-                        category: activeHotspot.source_category,
-                        distance_km: activeHotspot.distance_km
-                      }
-                    ],
-                    vulnerability_flags: [
-                      "High concentration near populated residential zone",
-                      "Elderly density exceeds 8%"
-                    ],
-                    recommended_actions: recommendation.steps
-                  })}
-                  style={{
-                    marginLeft: 'auto',
-                    padding: '4px 10px',
-                    background: '#0f172a',
-                    color: '#ffffff',
-                    border: 'none',
-                    borderRadius: '6px',
-                    fontSize: '11px',
-                    fontWeight: '700',
-                    cursor: 'pointer'
-                  }}
-                >
-                  View Photo
-                </button>
               </div>
-            </div>
-
-            {/* Dispersion Compass */}
-            <div className="telemetry-card" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-              <div className="telemetry-card-title" style={{ width: '100%' }}>
-                <span>Dispersion Compass</span>
+            ) : (
+              <div style={{ textAlign: 'center', padding: '40px 20px', color: '#64748b', fontSize: '13px' }}>
+                {scanning ? 'Scanning for pollution hotspots...' : 'No active pollution hotspots detected (AQI < 201 across all wards). Air quality is acceptable.'}
               </div>
-              
-              <div className="telemetry-compass-dial" style={{ margin: '8px 0' }}>
-                <div 
-                  className="telemetry-compass-needle" 
-                  style={{ transform: `rotate(${activeHotspot.wind_direction}deg)` }} 
-                />
-                <span style={{ position: 'absolute', top: '6px', fontSize: '10px', fontWeight: '800', color: '#64748b' }}>N</span>
-                <span style={{ position: 'absolute', right: '8px', fontSize: '10px', fontWeight: '800', color: '#64748b' }}>E</span>
-                <span style={{ position: 'absolute', bottom: '6px', fontSize: '10px', fontWeight: '800', color: '#64748b' }}>S</span>
-                <span style={{ position: 'absolute', left: '8px', fontSize: '10px', fontWeight: '800', color: '#64748b' }}>W</span>
-              </div>
-              
-              <div style={{ textAlign: 'center', width: '100%', marginTop: '6px' }}>
-                <div style={{ fontSize: '14px', fontWeight: '850', color: '#0f172a' }}>
-                  {activeHotspot.wind_direction}° ({activeHotspot.wind_speed})
-                </div>
-                <div style={{ fontSize: '10px', color: '#64748b', fontWeight: '750', textTransform: 'uppercase', marginTop: '2px' }}>
-                  Wind Vector Dispersion Path
-                </div>
-                
-                <div style={{ fontSize: '10px', color: '#94a3b8', marginTop: '8px', lineHeight: '1.4' }}>
-                  Source: <strong>{activeHotspot.coordinates}</strong><br />
-                  Hotspot: <strong>{activeHotspot.location[0].toFixed(4)}, {activeHotspot.location[1].toFixed(4)}</strong>
-                </div>
-              </div>
-            </div>
-
+            )}
           </div>
+        </div>
 
+        {/* RIGHT: Prioritised Action */}
+        <div className="telemetry-column-right">
+          <div className="telemetry-card" style={{ display: 'flex', flexDirection: 'column', minHeight: '300px' }}>
+            <div className="telemetry-card-title" style={{ marginBottom: '12px' }}>
+              <span style={{ fontSize: '16px' }}>Prioritised Action</span>
+              <span style={{ fontSize: '10px', background: '#eff6ff', color: '#2563eb', padding: '2px 8px', borderRadius: '4px', fontWeight: '700' }}>AI RECOMMENDATION</span>
+            </div>
+            
+            {activeItem ? (
+              <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
+                {/* Header info */}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '16px', paddingBottom: '12px', borderBottom: '1.5px solid #f1f5f9' }}>
+                  <div>
+                    <div style={{ fontSize: '15px', fontWeight: '800', color: '#0f172a' }}>{activeItem.ward_name}</div>
+                    <div style={{ fontSize: '11px', color: '#64748b', marginTop: '4px' }}>
+                      Priority Score: <strong>{activeItem.priority_score}</strong> · Severity: <strong>{activeItem.severity?.replace('_', ' ').toUpperCase()}</strong>
+                    </div>
+                  </div>
+                  <div style={{ fontSize: '22px', fontWeight: '850', color: activeItem.aqi > 400 ? '#ef4444' : activeItem.aqi > 300 ? '#f97316' : '#eab308' }}>
+                    {Math.round(activeItem.aqi)} <span style={{ fontSize: '11px', color: '#64748b' }}>AQI</span>
+                  </div>
+                </div>
+
+                {/* Pollutant exceedances */}
+                {activeItem.pollutant_exceedances?.length > 0 && (
+                  <div style={{ marginBottom: '14px' }}>
+                    <div style={{ fontSize: '10px', color: '#94a3b8', textTransform: 'uppercase', fontWeight: '700', letterSpacing: '0.5px', marginBottom: '6px' }}>Pollutant Exceedances</div>
+                    <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                      {activeItem.pollutant_exceedances.map((e, i) => (
+                        <span key={i} style={{ fontSize: '11px', color: '#dc2626', background: '#fef2f2', padding: '3px 8px', borderRadius: '6px', border: '1px solid #fecaca', fontWeight: '600' }}>
+                          {e}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Inferred Sources */}
+                {activeItem.inferred_sources?.length > 0 && (
+                  <div style={{ marginBottom: '14px' }}>
+                    <div style={{ fontSize: '10px', color: '#94a3b8', textTransform: 'uppercase', fontWeight: '700', letterSpacing: '0.5px', marginBottom: '6px' }}>Inferred Emission Sources</div>
+                    <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                      {activeItem.inferred_sources.map((s, i) => (
+                        <span key={i} style={{ fontSize: '11px', color: '#1e40af', background: '#eff6ff', padding: '3px 8px', borderRadius: '6px', border: '1px solid #bfdbfe', fontWeight: '600' }}>
+                          {s}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Recommended Actions from backend EnforcementAgent */}
+                <div style={{ marginBottom: '14px', flex: 1 }}>
+                  <div style={{ fontSize: '10px', color: '#94a3b8', textTransform: 'uppercase', fontWeight: '700', letterSpacing: '0.5px', marginBottom: '8px' }}>Recommended Actions</div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                    {(activeItem.recommended_actions || []).map((action, i) => (
+                      <div key={i} style={{ display: 'flex', gap: '8px', fontSize: '12px', color: '#334155', fontWeight: '500', padding: '8px 12px', background: '#f8fafc', borderRadius: '8px', border: '1px solid #e2e8f0', lineHeight: '1.4' }}>
+                        <span style={{ color: '#3b82f6', fontWeight: '800', flexShrink: 0 }}>{i + 1}.</span>
+                        <span>{action}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Vulnerability flags */}
+                {activeItem.vulnerability_flags?.length > 0 && (
+                  <div style={{ marginBottom: '14px', padding: '10px 12px', background: 'rgba(245,158,11,0.06)', border: '1px solid rgba(245,158,11,0.2)', borderRadius: '10px' }}>
+                    <div style={{ fontSize: '10px', fontWeight: '700', color: '#b45309', marginBottom: '4px', textTransform: 'uppercase' }}>Vulnerable Population</div>
+                    {activeItem.vulnerability_flags.map((f, i) => (
+                      <div key={i} style={{ fontSize: '11px', color: '#b45309', fontWeight: '600', paddingLeft: '8px' }}>• {f}</div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Actions */}
+                <div style={{ display: 'flex', gap: '10px', paddingTop: '12px', borderTop: '1.5px solid #f1f5f9', marginTop: 'auto' }}>
+                  <button
+                    onClick={() => onViewEvidence && onViewEvidence(activeItem)}
+                    style={{
+                      flex: 1,
+                      padding: '10px 16px',
+                      background: '#0f172a',
+                      color: '#ffffff',
+                      border: 'none',
+                      borderRadius: '10px',
+                      fontSize: '12px',
+                      fontWeight: '700',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: '6px'
+                    }}
+                  >
+                    <FileText size={13} />
+                    View Evidence Package
+                  </button>
+                  <a
+                    href={activeItem.location ? `https://maps.google.com/?q=${activeItem.location[0]},${activeItem.location[1]}` : '#'}
+                    target="_blank" rel="noopener noreferrer"
+                    style={{
+                      padding: '10px 16px',
+                      border: '1px solid #e2e8f0',
+                      borderRadius: '10px',
+                      fontSize: '12px',
+                      fontWeight: '600',
+                      color: '#475569',
+                      background: '#f8fafc',
+                      textDecoration: 'none',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '4px'
+                    }}
+                  >
+                    <Navigation size={12} />
+                    Maps
+                  </a>
+                </div>
+              </div>
+            ) : (
+              <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#94a3b8', fontSize: '13px', textAlign: 'center', padding: '40px' }}>
+                {sortedDispatches.length === 0 
+                  ? 'No pollution hotspots detected. All wards are within acceptable AQI limits.'
+                  : 'Select a hotspot from the left panel to view prioritised actions.'
+                }
+              </div>
+            )}
+          </div>
         </div>
 
       </div>
-
     </div>
   )
 }

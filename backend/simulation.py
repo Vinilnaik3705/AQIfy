@@ -139,46 +139,84 @@ def _calculate_sub_index(val: float, breakpoints: List[tuple]) -> float:
     return 0.0
 
 def calculate_indian_aqi(pm25: float, pm10: float, no2: float, so2: float, co: float, o3: float) -> float:
-    """Calculate the US EPA AQI (0-500 scale) to align with popular global weather and AQI websites.
+    """Calculate the Indian National Air Quality Index (NAQI) using official CPCB breakpoints.
 
-    Notes on units expected:
+    Reference: Central Pollution Control Board (CPCB) National Air Quality Index,
+    as used by aqi.in, SAFAR, and all Indian monitoring stations.
+
+    Units expected:
       pm25, pm10 → µg/m³
-      no2, so2, o3 → µg/m³ (converted to ppb internally)
-      co → mg/m³ (converted to ppm internally)
+      no2, so2, o3 → µg/m³
+      co → mg/m³
     """
-    # US EPA PM2.5 and PM10 breakpoints (closed gaps for float values)
-    pm25_bp = [(0.0, 12.0, 0, 50), (12.0, 35.4, 50, 100), (35.4, 55.4, 100, 150), (55.4, 150.4, 150, 200), (150.4, 250.4, 200, 300), (250.4, 350.4, 300, 400), (350.4, 500.4, 400, 500)]
-    pm10_bp = [(0.0, 54.0, 0, 50), (54.0, 154.0, 50, 100), (154.0, 254.0, 100, 150), (254.0, 354.0, 150, 200), (354.0, 424.0, 200, 300), (424.0, 504.0, 300, 400), (504.0, 604.0, 400, 500)]
-    
-    # NO2 conversion: 1 ppb = 1.88 µg/m³
-    no2_ppb = no2 / 1.88
-    no2_bp = [(0.0, 53.0, 0, 50), (53.0, 100.0, 50, 100), (100.0, 360.0, 100, 150), (360.0, 649.0, 150, 200), (649.0, 1249.0, 200, 300), (1249.0, 1649.0, 300, 400), (1649.0, 2049.0, 400, 500)]
-    
-    # SO2 conversion: 1 ppb = 2.62 µg/m³
-    so2_ppb = so2 / 2.62
-    so2_bp = [(0.0, 35.0, 0, 50), (35.0, 75.0, 50, 100), (75.0, 185.0, 100, 150), (185.0, 304.0, 150, 200), (304.0, 604.0, 200, 300), (604.0, 804.0, 300, 400), (804.0, 1004.0, 400, 500)]
-    
-    # CO conversion: 1 ppm = 1.15 mg/m³
-    co_ppm = co / 1.15
-    co_bp = [(0.0, 4.4, 0, 50), (4.4, 9.4, 50, 100), (9.4, 12.4, 100, 150), (12.4, 15.4, 150, 200), (15.4, 30.4, 200, 300), (30.4, 40.4, 300, 400), (40.4, 50.4, 400, 500)]
-    
-    # O3 conversion: 1 ppb = 1.96 µg/m³
-    o3_ppb = o3 / 1.96
-    o3_bp = [(0.0, 54.0, 0, 50), (54.0, 70.0, 50, 100), (70.0, 85.0, 100, 150), (85.0, 105.0, 150, 200), (105.0, 200.0, 200, 300), (200.0, 400.0, 300, 400), (400.0, 500.0, 400, 500)]
+    # Official CPCB NAQI breakpoints (concentration ranges map to AQI sub-index ranges)
+    # Format: (conc_lo, conc_hi, aqi_lo, aqi_hi)
+    pm25_bp = [
+        (0, 30, 0, 50),       # Good
+        (31, 60, 51, 100),     # Satisfactory
+        (61, 90, 101, 200),    # Moderate
+        (91, 120, 201, 300),   # Poor
+        (121, 250, 301, 400),  # Very Poor
+        (250, 500, 401, 500),  # Severe
+    ]
+    pm10_bp = [
+        (0, 50, 0, 50),
+        (51, 100, 51, 100),
+        (101, 250, 101, 200),
+        (251, 350, 201, 300),
+        (351, 430, 301, 400),
+        (430, 600, 401, 500),
+    ]
+    # NO2 in µg/m³ (no conversion needed for Indian standard)
+    no2_bp = [
+        (0, 40, 0, 50),
+        (41, 80, 51, 100),
+        (81, 180, 101, 200),
+        (181, 280, 201, 300),
+        (281, 400, 301, 400),
+        (400, 800, 401, 500),
+    ]
+    # SO2 in µg/m³
+    so2_bp = [
+        (0, 40, 0, 50),
+        (41, 80, 51, 100),
+        (81, 380, 101, 200),
+        (381, 800, 201, 300),
+        (801, 1600, 301, 400),
+        (1600, 3200, 401, 500),
+    ]
+    # CO in mg/m³
+    co_bp = [
+        (0, 1.0, 0, 50),
+        (1.1, 2.0, 51, 100),
+        (2.1, 10, 101, 200),
+        (10, 17, 201, 300),
+        (17, 34, 301, 400),
+        (34, 70, 401, 500),
+    ]
+    # O3 in µg/m³
+    o3_bp = [
+        (0, 50, 0, 50),
+        (51, 100, 51, 100),
+        (101, 168, 101, 200),
+        (169, 208, 201, 300),
+        (209, 748, 301, 400),
+        (748, 1500, 401, 500),
+    ]
 
     indices = []
     if pm25 > 0:
         indices.append(_calculate_sub_index(pm25, pm25_bp))
     if pm10 > 0:
         indices.append(_calculate_sub_index(pm10, pm10_bp))
-    if no2_ppb > 0:
-        indices.append(_calculate_sub_index(no2_ppb, no2_bp))
-    if so2_ppb > 0:
-        indices.append(_calculate_sub_index(so2_ppb, so2_bp))
-    if co_ppm > 0:
-        indices.append(_calculate_sub_index(co_ppm, co_bp))
-    if o3_ppb > 0:
-        indices.append(_calculate_sub_index(o3_ppb, o3_bp))
+    if no2 > 0:
+        indices.append(_calculate_sub_index(no2, no2_bp))
+    if so2 > 0:
+        indices.append(_calculate_sub_index(so2, so2_bp))
+    if co > 0:
+        indices.append(_calculate_sub_index(co, co_bp))
+    if o3 > 0:
+        indices.append(_calculate_sub_index(o3, o3_bp))
 
     return max(indices) if indices else 0.0
 
@@ -284,14 +322,14 @@ async def _fetch_real_aqi_openweather(lat: float, lng: float) -> Optional[Dict[s
                     co = (components.get("co", 0.0) or 0.0) / 1000.0
                     o3 = components.get("o3", 0.0) or 0.0
                     
-                    # Apply dynamic calibration correction for model overestimations in India (matching Open-Meteo CAMS correction)
-                    if pm25_raw > 20.0:
-                        correction = min(1.0, max(0.2, 20.0 / pm25_raw + 0.15))
-                        pm25_cal = pm25_raw * correction
+                    # Gentle CAMS calibration: CAMS overestimates by ~30% above 30µg/m³
+                    # Below 30µg/m³ the model is accurate, so we trust the raw value.
+                    if pm25_raw > 30.0:
+                        pm25_cal = 30.0 + (pm25_raw - 30.0) * 0.7
                     else:
                         pm25_cal = pm25_raw
                     
-                    pm10_cal = min(pm10_raw, pm25_cal * 2.2)
+                    pm10_cal = min(pm10_raw, pm25_cal * 2.0)
                     
                     aqi_in = calculate_indian_aqi(pm25_cal, pm10_cal, no2, so2, co, o3)
                     
@@ -499,16 +537,13 @@ async def _fetch_real_aqi(lat: float, lng: float) -> Optional[Dict[str, Any]]:
                 o3_raw = data.get("ozone", 0)
 
                 if us_aqi is not None:
-                    # Apply dynamic calibration correction for CAMS model overestimation in India.
-                    # Overestimation scales with concentration: low values are accurate, high values are overestimated.
-                    if pm25_raw > 20.0:
-                        correction = min(1.0, max(0.2, 20.0 / pm25_raw + 0.15))
-                        pm25_cal = pm25_raw * correction
+                    # Gentle CAMS calibration: CAMS overestimates by ~30% above 30µg/m³
+                    if pm25_raw > 30.0:
+                        pm25_cal = 30.0 + (pm25_raw - 30.0) * 0.7
                     else:
                         pm25_cal = pm25_raw
                     
-                    # PM10/PM2.5 ratio in urban areas is physically capped (dust/combustion mix)
-                    pm10_cal = min(pm10_raw, pm25_cal * 2.2)
+                    pm10_cal = min(pm10_raw, pm25_cal * 2.0)
 
                     aqi_val = calculate_indian_aqi(pm25_cal, pm10_cal, no2_raw, so2_raw, co_raw, o3_raw)
 
@@ -524,12 +559,11 @@ async def _fetch_real_aqi(lat: float, lng: float) -> Optional[Dict[str, Any]]:
                     }
                 else:
                     # Fallback: no us_aqi field, use corrected raw with Indian AQI calc
-                    if pm25_raw > 20.0:
-                        correction = min(1.0, max(0.2, 20.0 / pm25_raw + 0.15))
-                        pm25_cal = pm25_raw * correction
+                    if pm25_raw > 30.0:
+                        pm25_cal = 30.0 + (pm25_raw - 30.0) * 0.7
                     else:
                         pm25_cal = pm25_raw
-                    pm10_cal = min(pm10_raw, pm25_cal * 2.2)
+                    pm10_cal = min(pm10_raw, pm25_cal * 2.0)
 
                     aqi_val = calculate_indian_aqi(pm25_cal, pm10_cal, no2_raw, so2_raw, co_raw, o3_raw)
                     return {
@@ -1174,12 +1208,11 @@ class SimulationEngine:
                         o3 = o3_arr[h] or 0.0
                         co = (co_arr[h] or 0.0) / 1000.0
 
-                        if pm25 > 20.0:
-                            correction = min(1.0, max(0.2, 20.0 / pm25 + 0.15))
-                            pm25_cal = pm25 * correction
+                        if pm25 > 30.0:
+                            pm25_cal = 30.0 + (pm25 - 30.0) * 0.7
                         else:
                             pm25_cal = pm25
-                        pm10_cal = min(pm10, pm25_cal * 2.2)
+                        pm10_cal = min(pm10, pm25_cal * 2.0)
 
                         aqi_in = calculate_indian_aqi(pm25_cal, pm10_cal, no2, so2, co, o3)
                     else:
@@ -1277,12 +1310,11 @@ class SimulationEngine:
                 o3 = o3_arr[h] or 0.0
                 co = (co_arr[h] or 0.0) / 1000.0
 
-                if pm25 > 20.0:
-                    correction = min(1.0, max(0.2, 20.0 / pm25 + 0.15))
-                    pm25_cal = pm25 * correction
+                if pm25 > 30.0:
+                    pm25_cal = 30.0 + (pm25 - 30.0) * 0.7
                 else:
                     pm25_cal = pm25
-                pm10_cal = min(pm10, pm25_cal * 2.2)
+                pm10_cal = min(pm10, pm25_cal * 2.0)
 
                 aqi_in = calculate_indian_aqi(pm25_cal, pm10_cal, no2, so2, co, o3)
 
