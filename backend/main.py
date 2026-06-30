@@ -1008,7 +1008,7 @@ if os.path.exists(frontend_dist):
 def serve_home():
     index_file = os.path.join(frontend_dist, "index.html")
     if os.path.exists(index_file):
-        return FileResponse(index_file)
+        return FileResponse(index_file, headers={"Cache-Control": "no-store, no-cache, must-revalidate"})
     return {"message": "AQI Intervention Platform Backend Running. Build frontend to view dashboard."}
 
 @app.get("/{catchall:path}")
@@ -1017,6 +1017,6 @@ def serve_static(catchall: str):
         return None
     index_file = os.path.join(frontend_dist, "index.html")
     if os.path.exists(index_file):
-        return FileResponse(index_file)
+        return FileResponse(index_file, headers={"Cache-Control": "no-store, no-cache, must-revalidate"})
     return {"message": "Not Found"}
 
