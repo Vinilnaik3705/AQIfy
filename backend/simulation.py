@@ -18,6 +18,8 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 
+HTTP_CLIENT = httpx.AsyncClient(timeout=12.0)
+
 # ── Multi-City Configuration ──────────────────────────────────────────────────
 # Each city has real ward/locality coordinates and known emission sources.
 
@@ -266,12 +268,11 @@ async def _fetch_real_aqi_openweather(lat: float, lng: float) -> Optional[Dict[s
         return None
     try:
         url = "http://api.openweathermap.org/data/2.5/air_pollution"
-        async with httpx.AsyncClient(timeout=8.0) as client:
-            resp = await client.get(url, params={"lat": lat, "lon": lng, "appid": key})
-            if resp.status_code == 200:
-                data = resp.json()
-                results = data.get("list", [])
-                if results:
+        resp = await HTTP_CLIENT.get(url, params={"lat": lat, "lon": lng, "appid": key})
+        if resp.status_code == 200:
+            data = resp.json()
+            results = data.get("list", [])
+            if results:
                     item = results[0]
                     components = item.get("components", {})
                     
