@@ -597,6 +597,64 @@ async def run_advisory(
     )
 
 
+@app.post("/api/health-assistant")
+async def health_assistant(request: Request):
+    try:
+        data = await request.json()
+        question = data.get("question", "")
+        lang = data.get("lang", "en")
+        aqi = data.get("aqi", 50.0)
+        city_name = data.get("city_name", "Delhi")
+        ward_name = data.get("ward_name", "Delhi")
+
+        gemini_api_key = os.environ.get("GEMINI_API_KEY")
+        if not gemini_api_key:
+            return {"response": "Gemini API key is not configured. Please add GEMINI_API_KEY in the .env file to enable the health assistant."}
+
+        lang_names = {
+            "en": "English",
+            "hi": "Hindi",
+            "kn": "Kannada",
+            "ta": "Tamil",
+            "te": "Telugu",
+            "ml": "Malayalam"
+        }
+        lang_name = lang_names.get(lang, "English")
+
+        prompt = f"""You are a professional medical and environmental health assistant.
+The user is asking a question about the health effects of air pollution or the current Air Quality Index (AQI).
+Current Context:
+- Location: {ward_name}, {city_name}
+- Current AQI: {aqi}
+
+User's Question: "{question}"
+
+Please provide a highly professional, helpful, and easy-to-understand response in the language '{lang_name}' (language code: '{lang}'). 
+Address their specific question directly. 
+Include practical safety precautions and health advice tailored to the current AQI level of {aqi}. 
+Keep your answer clear and concise (under 4 sentences). Do not use markdown tags other than bold text if needed.
+"""
+
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={gemini_api_key}"
+        headers = {"Content-Type": "application/json"}
+        payload = {
+            "contents": [{
+                "parts": [{"text": prompt}]
+            }]
+        }
+
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.post(url, json=payload, headers=headers)
+            if resp.status_code == 200:
+                res_data = resp.json()
+                text_response = res_data["candidates"][0]["content"]["parts"][0]["text"].strip()
+                return {"response": text_response}
+            else:
+                return {"response": f"Gemini API Error: received status code {resp.status_code}"}
+    except Exception as e:
+        return {"response": f"Error communicating with Gemini: {str(e)}"}
+
+
 # ── Email Alert Subscriptions (SQLite + Resend) ──────────────────────────────
 
 @app.post("/api/advisory/subscribe")

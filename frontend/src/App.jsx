@@ -25,7 +25,7 @@ import {
   Wind, Thermometer, Bell, BellRing, Activity, MapPin, Zap, Shield, Factory,
   Car, Hammer, Flame, Leaf, RefreshCw, Eye, FileText, Navigation,
   ChevronRight, Clock, Gauge, AlertCircle, CheckCircle, XCircle,
-  Satellite, Building2, GraduationCap, Heart, ArrowUpRight,
+  Satellite, Building2, GraduationCap, Heart, ArrowUpRight, Sparkles,
   Volume2, VolumeX, ExternalLink, Info, Radio, Phone, Sun, Cloud, CloudRain, Moon, CloudMoon
 } from 'lucide-react'
 
@@ -3144,6 +3144,44 @@ function CitizensAdvisoryPopup({
   const [nearbyPlaces, setNearbyPlaces] = useState(null)
   const [nearbyLoading, setNearbyLoading] = useState(false)
 
+  // AI Health Assistant States & Function
+  const [aiQuestion, setAiQuestion] = useState('')
+  const [aiLang, setAiLang] = useState(lang || 'en')
+  const [aiResponse, setAiResponse] = useState('')
+  const [aiLoading, setAiLoading] = useState(false)
+
+  // Sync AI language choice if user changes main lang dropdown
+  useEffect(() => {
+    if (lang) {
+      setAiLang(lang);
+    }
+  }, [lang])
+
+  const handleAskAi = async () => {
+    if (!aiQuestion.trim()) return;
+    setAiLoading(true);
+    setAiResponse('');
+    try {
+      const response = await fetch('/api/health-assistant', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          question: aiQuestion,
+          lang: aiLang,
+          aqi: advisory ? advisory.aqi : 50,
+          city_name: state?.city?.name || 'Delhi',
+          ward_name: advisory ? advisory.ward_name : 'Delhi'
+        })
+      });
+      const data = await response.json();
+      setAiResponse(data.response || 'No response from assistant.');
+    } catch (err) {
+      setAiResponse('Error communicating with AI health assistant.');
+    } finally {
+      setAiLoading(false);
+    }
+  };
+
   // Fetch nearby hospitals & pharmacies when ward changes and popup is open
   useEffect(() => {
     if (!isOpen || !selectedWard?.center) return
@@ -3303,19 +3341,20 @@ function CitizensAdvisoryPopup({
               {/* Driver Analysis Section */}
               {advisory.reason && (
                 <div style={{ 
-                  marginTop: '12px', 
-                  padding: '10px 12px', 
-                  background: '#f1f5f9', 
-                  borderRadius: '6px', 
-                  fontSize: '13px', 
-                  borderLeft: `3px solid ${getAqiColor(advisory.aqi)}`,
-                  color: '#475569',
-                  lineHeight: '1.4',
-                  border: '1px solid #e2e8f0',
-                  borderLeftWidth: '3px'
+                  marginTop: '16px', 
+                  padding: '14px 16px', 
+                  background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.8), rgba(255, 255, 255, 0.65))', 
+                  backdropFilter: 'blur(8px)',
+                  borderRadius: '12px', 
+                  fontSize: '13.5px', 
+                  boxShadow: '0 8px 32px 0 rgba(31, 38, 135, 0.05)',
+                  border: '1px solid rgba(226, 232, 240, 0.8)',
+                  borderLeft: `5px solid ${getAqiColor(advisory.aqi)}`,
+                  color: '#334155',
+                  lineHeight: '1.5',
                 }}>
-                  <strong style={{ color: '#0f172a', display: 'flex', alignItems: 'center', gap: '4px', marginBottom: '2px', fontSize: '14px' }}>
-                    <Search size={14} color="#3b82f6" /> Driver Analysis
+                  <strong style={{ color: '#0f172a', display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '8px', fontSize: '14.5px', fontWeight: '700' }}>
+                    <Search size={15} color="#3b82f6" /> Driver Analysis
                   </strong>
                   {advisory.reason}
                 </div>
@@ -3372,6 +3411,135 @@ function CitizensAdvisoryPopup({
                 </div>
               )}
 
+              {/* Multilingual AI Health Assistant */}
+              <div style={{
+                marginTop: '20px',
+                padding: '16px',
+                background: 'linear-gradient(135deg, rgba(239, 246, 255, 0.9), rgba(255, 255, 255, 0.9))',
+                borderRadius: '16px',
+                border: '1px solid rgba(59, 130, 246, 0.2)',
+                boxShadow: '0 8px 30px rgba(59, 130, 246, 0.05)',
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
+                  <span style={{ fontSize: '14.5px', fontWeight: '800', color: '#1e3a8a', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <Sparkles size={16} color="#3b82f6" /> AI Health Assistant
+                  </span>
+                  
+                  {/* Language Selector */}
+                  <select
+                    value={aiLang}
+                    onChange={(e) => setAiLang(e.target.value)}
+                    style={{
+                      fontSize: '12px',
+                      padding: '3px 8px',
+                      borderRadius: '8px',
+                      border: '1px solid #bfdbfe',
+                      background: '#ffffff',
+                      color: '#1e3a8a',
+                      fontWeight: '600',
+                      cursor: 'pointer',
+                      outline: 'none'
+                    }}
+                  >
+                    <option value="en">English</option>
+                    <option value="hi">हिन्दी (Hindi)</option>
+                    <option value="kn">ಕನ್ನಡ (Kannada)</option>
+                    <option value="ta">தமிழ் (Tamil)</option>
+                    <option value="te">తెలుగు (Telugu)</option>
+                    <option value="ml">മലയാളം (Malayalam)</option>
+                  </select>
+                </div>
+
+                <div style={{ position: 'relative' }}>
+                  <textarea
+                    rows={2}
+                    value={aiQuestion}
+                    onChange={(e) => setAiQuestion(e.target.value)}
+                    placeholder={
+                      aiLang === 'kn' ? "ಈ AQI ನ ಆರೋಗ್ಯದ ಮೇಲಿನ ಪರಿಣಾಮಗಳ ಬಗ್ಗೆ ಏನೇ ಕೇಳಿ..." :
+                      aiLang === 'ml' ? "ഈ AQI-യുടെ ആരോഗ്യ പ്രത്യാഘാതങ്ങളെക്കുറിച്ച് എന്തും ചോദിക്കുക..." :
+                      aiLang === 'ta' ? "இந்த AQI இன் சுகாதார விளைவுகள் பற்றி ஏதேனும் கேளுங்கள்..." :
+                      aiLang === 'te' ? "ఈ AQI ఆరోగ్య ప్రభావాల గురించి ఏదైనా అడగండి..." :
+                      aiLang === 'hi' ? "इस AQI के स्वास्थ्य प्रभावों के बारे में कुछ भी पूछें..." :
+                      "Ask anything about health effects of this AQI..."
+                    }
+                    style={{
+                      width: '100%',
+                      padding: '10px 12px',
+                      borderRadius: '12px',
+                      border: '1px solid #bfdbfe',
+                      fontSize: '13px',
+                      color: '#1e293b',
+                      background: '#ffffff',
+                      outline: 'none',
+                      resize: 'none',
+                      lineHeight: '1.4',
+                      boxShadow: 'inset 0 2px 4px rgba(0,0,0,0.02)',
+                      fontFamily: 'inherit',
+                      boxSizing: 'border-box'
+                    }}
+                  />
+                  <button
+                    onClick={handleAskAi}
+                    disabled={aiLoading || !aiQuestion.trim()}
+                    style={{
+                      marginTop: '8px',
+                      width: '100%',
+                      padding: '8px 12px',
+                      background: 'linear-gradient(to right, #3b82f6, #2563eb)',
+                      color: '#ffffff',
+                      border: 'none',
+                      borderRadius: '10px',
+                      fontSize: '13px',
+                      fontWeight: '700',
+                      cursor: !aiQuestion.trim() || aiLoading ? 'not-allowed' : 'pointer',
+                      opacity: !aiQuestion.trim() || aiLoading ? 0.6 : 1,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: '6px',
+                      boxShadow: '0 4px 12px rgba(59, 130, 246, 0.25)',
+                      transition: 'all 0.2s'
+                    }}
+                  >
+                    {aiLoading ? (
+                      <>
+                        <span className="spinner-mini" style={{
+                          width: '12px',
+                          height: '12px',
+                          border: '2px solid #ffffff',
+                          borderTopColor: 'transparent',
+                          borderRadius: '50%',
+                          display: 'inline-block',
+                          animation: 'spin 0.6s linear infinite'
+                        }} />
+                        Analyzing...
+                      </>
+                    ) : (
+                      <>Ask Health Assistant</>
+                    )}
+                  </button>
+                </div>
+
+                {/* AI Response Display */}
+                {aiResponse && (
+                  <div style={{
+                    marginTop: '12px',
+                    padding: '12px 14px',
+                    background: '#ffffff',
+                    borderRadius: '12px',
+                    border: '1px solid #e2e8f0',
+                    fontSize: '13px',
+                    color: '#334155',
+                    lineHeight: '1.5',
+                    boxShadow: '0 4px 12px rgba(0,0,0,0.02)',
+                  }}>
+                    <div style={{ fontWeight: '750', color: '#1e3a8a', fontSize: '11px', textTransform: 'uppercase', marginBottom: '6px', letterSpacing: '0.5px' }}>Response</div>
+                    <div style={{ whiteSpace: 'pre-wrap' }}>{aiResponse}</div>
+                  </div>
+                )}
+              </div>
+
               {/* Vulnerability chips */}
               {advisory.vulnerable_info && (
                 <div style={{ marginTop: 16, borderTop: '1px solid var(--border)', paddingTop: 10 }}>
@@ -3408,10 +3576,19 @@ function CitizensAdvisoryPopup({
                           <span>Hospitals</span>
                         </div>
                         {nearbyPlaces.filter(p => p.type === 'hospital').slice(0, 3).map((p, i) => (
-                          <div key={`h-${i}`} style={{ background: 'rgba(239,68,68,0.06)', padding: '6px 8px', borderRadius: 6, marginBottom: 4, fontSize: 14, borderLeft: '2px solid #ef4444' }}>
-                            <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{p.name}</div>
-                            {p.address && <div style={{ color: 'var(--text-muted)', fontSize: 13, display: 'flex', alignItems: 'center', gap: '4px', marginTop: '2px' }}><MapPin size={10} color="#64748b" /> {p.address}</div>}
-                            {p.phone && <div style={{ color: 'var(--accent-primary)', fontSize: 13, display: 'flex', alignItems: 'center', gap: '4px', marginTop: '2px' }}><Phone size={10} color="#ef4444" /> {p.phone}</div>}
+                          <div key={`h-${i}`} style={{ 
+                            background: 'linear-gradient(to right, rgba(239, 68, 68, 0.04), rgba(239, 68, 68, 0.01))', 
+                            padding: '12px 14px', 
+                            borderRadius: '12px', 
+                            marginBottom: '8px', 
+                            fontSize: '13.5px', 
+                            border: '1px solid rgba(239, 68, 68, 0.1)',
+                            borderLeft: '4px solid #ef4444',
+                            boxShadow: '0 4px 12px rgba(239, 68, 68, 0.02)'
+                          }}>
+                            <div style={{ fontWeight: 650, color: '#1e293b' }}>{p.name}</div>
+                            {p.address && <div style={{ color: '#64748b', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '5px', marginTop: '4px' }}><MapPin size={11} color="#94a3b8" /> {p.address}</div>}
+                            {p.phone && <div style={{ color: '#ef4444', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '5px', marginTop: '4px', fontWeight: '600' }}><Phone size={11} color="#ef4444" /> {p.phone}</div>}
                           </div>
                         ))}
                       </div>
@@ -3423,10 +3600,19 @@ function CitizensAdvisoryPopup({
                           <span>Medical Stores / Pharmacies</span>
                         </div>
                         {nearbyPlaces.filter(p => p.type === 'pharmacy').slice(0, 3).map((p, i) => (
-                          <div key={`p-${i}`} style={{ background: 'rgba(34,197,94,0.06)', padding: '6px 8px', borderRadius: 6, marginBottom: 4, fontSize: 14, borderLeft: '2px solid #22c55e' }}>
-                            <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{p.name}</div>
-                            {p.address && <div style={{ color: 'var(--text-muted)', fontSize: 13, display: 'flex', alignItems: 'center', gap: '4px', marginTop: '2px' }}><MapPin size={10} color="#64748b" /> {p.address}</div>}
-                            {p.phone && <div style={{ color: 'var(--accent-primary)', fontSize: 13, display: 'flex', alignItems: 'center', gap: '4px', marginTop: '2px' }}><Phone size={10} color="#22c55e" /> {p.phone}</div>}
+                          <div key={`p-${i}`} style={{ 
+                            background: 'linear-gradient(to right, rgba(34, 197, 94, 0.04), rgba(34, 197, 94, 0.01))', 
+                            padding: '12px 14px', 
+                            borderRadius: '12px', 
+                            marginBottom: '8px', 
+                            fontSize: '13.5px', 
+                            border: '1px solid rgba(34, 197, 94, 0.1)',
+                            borderLeft: '4px solid #22c55e',
+                            boxShadow: '0 4px 12px rgba(34, 197, 94, 0.02)'
+                          }}>
+                            <div style={{ fontWeight: 650, color: '#1e293b' }}>{p.name}</div>
+                            {p.address && <div style={{ color: '#64748b', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '5px', marginTop: '4px' }}><MapPin size={11} color="#94a3b8" /> {p.address}</div>}
+                            {p.phone && <div style={{ color: '#22c55e', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '5px', marginTop: '4px', fontWeight: '600' }}><Phone size={11} color="#22c55e" /> {p.phone}</div>}
                           </div>
                         ))}
                       </div>
