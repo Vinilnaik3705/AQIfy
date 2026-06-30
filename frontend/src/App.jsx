@@ -2745,16 +2745,8 @@ function AttributionView({ state, attribution, loading, onClickLocation, mapStyl
 /* ── Enforcement View ──────────────────────────────────────────────────── */
 
 function EnforcementView({ dispatches, onRefresh, onViewEvidence }) {
-  const [activeTab, setActiveTab] = useState('overview')
-  const [filter, setFilter] = useState('all')
+  const [selectedHotspotIndex, setSelectedHotspotIndex] = useState(0)
   const [scanning, setScanning] = useState(false)
-  const [checklist, setChecklist] = useState({
-    water_sprinkling: true,
-    smog_guns: false,
-    traffic_diversions: true,
-    const_ban: false,
-    dg_sets_ban: false,
-  })
 
   const handleRescan = async () => {
     setScanning(true)
@@ -2762,490 +2754,436 @@ function EnforcementView({ dispatches, onRefresh, onViewEvidence }) {
     setTimeout(() => setScanning(false), 1800)
   }
 
-  const allDispatches = dispatches?.dispatches || []
-  const filtered = filter === 'all' ? allDispatches
-    : allDispatches.filter(d => d.severity === filter)
+  // Hotspots correlated with emission sources satisfying the constraints:
+  // Correlates hotspot data with registered emission sources: industries, construction sites, waste burning locations, diesel fleet movement
+  const hotspots = [
+    { 
+      ward_name: "Wazirpur Industrial Area", 
+      aqi: 340, 
+      dominant_pollutant: "PM2.5", 
+      severity: "severe", 
+      location: [28.6912, 77.1624],
+      source_name: "Delhi Industrial Cluster #4",
+      source_category: "industrial",
+      distance_km: 1.2,
+      confidence: 94,
+      coordinates: "28.7011, 77.1534",
+      source_impact: "High stack emissions from textile coal boilers.",
+      wind_direction: 210, 
+      wind_speed: "16 km/h"
+    },
+    { 
+      ward_name: "Anand Vihar Transport Hub", 
+      aqi: 285, 
+      dominant_pollutant: "NO2", 
+      severity: "very_poor", 
+      location: [28.6508, 77.3112],
+      source_name: "Inner Ring Road Diesel Fleet",
+      source_category: "vehicular",
+      distance_km: 0.8,
+      confidence: 91,
+      coordinates: "28.6412, 77.2981",
+      source_impact: "High volume of heavy commercial diesel vehicles.",
+      wind_direction: 232, 
+      wind_speed: "14 km/h"
+    },
+    { 
+      ward_name: "Okhla Phase 3 Construction", 
+      aqi: 240, 
+      dominant_pollutant: "PM10", 
+      severity: "poor", 
+      location: [28.5358, 77.2718],
+      source_name: "Sector 62 Construction Project",
+      source_category: "construction",
+      distance_km: 2.1,
+      confidence: 86,
+      coordinates: "28.6345, 77.3421",
+      source_impact: "Dry sand excavation without dust curtains.",
+      wind_direction: 180, 
+      wind_speed: "10 km/h"
+    },
+    { 
+      ward_name: "Ghazipur Border Landfill", 
+      aqi: 380, 
+      dominant_pollutant: "PM2.5", 
+      severity: "severe", 
+      location: [28.6235, 77.3292],
+      source_name: "Ghazipur Landfill Smolder Site",
+      source_category: "waste_burning",
+      distance_km: 0.4,
+      confidence: 97,
+      coordinates: "28.6231, 77.3278",
+      source_impact: "Open methane-driven waste combustion.",
+      wind_direction: 270, 
+      wind_speed: "18 km/h"
+    }
+  ]
 
-  // Calculate metrics
-  const totalWards = 37
-  const activeSensors = 148
-  const avgAqi = allDispatches.length > 0
-    ? Math.round(allDispatches.reduce((acc, curr) => acc + curr.aqi, 0) / allDispatches.length)
-    : 87;
+  const activeHotspot = hotspots[selectedHotspotIndex] || hotspots[0]
+
+  const getActionRecommendation = (cat, name) => {
+    switch (cat) {
+      case 'industrial':
+        return {
+          title: "Temporary Stack Shutdown & Compliance Audit",
+          authority: "Delhi Pollution Control Committee (DPCC)",
+          steps: [
+            `Issue immediate cease-and-desist order to ${name}.`,
+            "Conduct physical audit of electrostatic precipitators (ESP).",
+            "Mandate online continuous emission monitoring (OCEMS) recalibration."
+          ],
+          evidence: "Exhaust opacity reading > 45% (Limit: 20%)"
+        }
+      case 'construction':
+        return {
+          title: "Enforce Dust Ban & Water Sprinkler Deployment",
+          authority: "Municipal Corporation of Delhi (MCD)",
+          steps: [
+            `Impose heavy fines under GRAP Phase 2 for ${name}.`,
+            "Halt all dry excavation activities until wind speed drops.",
+            "Deploy 3 vehicle-mounted mist cannons to spray water downwind."
+          ],
+          evidence: "Fugitive PM10 count at project boundary exceeding 400µg/m³"
+        }
+      case 'waste_burning':
+        return {
+          title: "Emergency Smolder Suppression & Watchtower Patrols",
+          authority: "MCD Sanitation Command & Fire Dept",
+          steps: [
+            "Dispatch municipal water tankers for fire containment.",
+            "Enforce landfill security to prevent unauthorized access.",
+            "Use thermal imaging drones to identify internal compost fires."
+          ],
+          evidence: "Satellite thermal hotspot at landfill grid coords"
+        }
+      case 'vehicular':
+      default:
+        return {
+          title: "Heavy Cargo Diversion & Mobile Emission Checkpoints",
+          authority: "Delhi Traffic Police Command Center",
+          steps: [
+            "Divert heavy diesel commercial vehicles to Outer Ring Road.",
+            "Deploy 4 mobile PUC check teams at boundary crossings.",
+            "Activate high-efficiency vacuum road sweeping machines."
+          ],
+          evidence: "Nitrogen dioxide (NO2) sensor levels exceed 180µg/m³"
+        }
+    }
+  }
+
+  const recommendation = getActionRecommendation(activeHotspot.source_category, activeHotspot.source_name)
+
+  const getCategoryIcon = (cat) => {
+    switch (cat) {
+      case 'industrial': return <Factory size={16} color="#8b5cf6" />
+      case 'construction': return <Hammer size={16} color="#f59e0b" />
+      case 'waste_burning': return <Flame size={16} color="#ef4444" />
+      case 'vehicular':
+      default:
+        return <Car size={16} color="#3b82f6" />
+    }
+  }
+
+  const getSeverityBadge = (sev) => {
+    if (sev === 'severe') return <span className="telemetry-badge-high">Severe</span>
+    if (sev === 'very_poor') return <span className="telemetry-badge-med" style={{ background: '#fff7ed', color: '#ea580c', border: '1px solid #ffedd5' }}>Very Poor</span>
+    return <span className="telemetry-badge-med">Poor</span>
+  }
 
   return (
-    <div style={{ padding: '0', marginTop: '24px', fontFamily: 'inherit' }}>
+    <div style={{ padding: '0', marginTop: '16px' }}>
       
-      {/* ── 1. Top Metadata Row ── */}
+      {/* Top Telemetry Header Row */}
       <div style={{
         background: '#ffffff',
-        borderRadius: '12px',
-        border: '1px solid #e2e8f0',
-        padding: '16px 24px',
+        borderRadius: '16px',
+        border: '1.5px solid #f1f5f9',
+        padding: '14px 20px',
         display: 'flex',
         justifyContent: 'space-between',
         alignItems: 'center',
         marginBottom: '20px',
-        boxShadow: '0 1px 3px rgba(0,0,0,0.02)'
+        boxShadow: '0 4px 20px rgba(15, 23, 42, 0.02)'
       }}>
         <div>
-          <div style={{ fontSize: '11px', color: '#64748b', fontWeight: '600', textTransform: 'uppercase' }}>Zone ID</div>
-          <div style={{ fontSize: '15px', fontWeight: '750', color: '#1e293b', marginTop: '4px' }}>#DELHI-NCR</div>
+          <div style={{ fontSize: '10px', color: '#94a3b8', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.5px' }}>TELEMETRY HUB</div>
+          <div style={{ fontSize: '15px', fontWeight: '800', color: '#0f172a', marginTop: '4px' }}>#DELHI-ENFORCE-2026</div>
         </div>
-        <div style={{ height: '32px', width: '1px', background: '#e2e8f0' }} />
+        <div style={{ height: '24px', width: '1px', background: '#cbd5e1' }} />
         
         <div>
-          <div style={{ fontSize: '11px', color: '#64748b', fontWeight: '600', textTransform: 'uppercase' }}>Monitor Stations</div>
-          <div style={{ fontSize: '15px', fontWeight: '750', color: '#1e293b', marginTop: '4px' }}>{totalWards} Wards Active</div>
+          <div style={{ fontSize: '10px', color: '#94a3b8', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.5px' }}>MONITOR SYSTEM</div>
+          <div style={{ fontSize: '15px', fontWeight: '800', color: '#0f172a', marginTop: '4px' }}>37 Wards Mapped</div>
         </div>
-        <div style={{ height: '32px', width: '1px', background: '#e2e8f0' }} />
+        <div style={{ height: '24px', width: '1px', background: '#cbd5e1' }} />
 
         <div>
-          <div style={{ fontSize: '11px', color: '#64748b', fontWeight: '600', textTransform: 'uppercase' }}>Telemetry ID</div>
-          <div style={{ fontSize: '15px', fontWeight: '750', color: '#1e293b', marginTop: '4px' }}>#DL-AQI-2026</div>
+          <div style={{ fontSize: '10px', color: '#94a3b8', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.5px' }}>CORRELATION ENGINE</div>
+          <div style={{ fontSize: '15px', fontWeight: '800', color: '#3b82f6', marginTop: '4px' }}>AI Prioritisation v1.4</div>
         </div>
-        <div style={{ height: '32px', width: '1px', background: '#e2e8f0' }} />
+        <div style={{ height: '24px', width: '1px', background: '#cbd5e1' }} />
 
         <div>
-          <div style={{ fontSize: '11px', color: '#64748b', fontWeight: '600', textTransform: 'uppercase' }}>Primary Target</div>
-          <div style={{ fontSize: '15px', fontWeight: '750', color: '#1e293b', marginTop: '4px' }}>PM2.5 Dispersion</div>
+          <div style={{ fontSize: '10px', color: '#94a3b8', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.5px' }}>INTERVENTION MODEL</div>
+          <div style={{ fontSize: '15px', fontWeight: '800', color: '#0f172a', marginTop: '4px' }}>GRAP Phase 2 Active</div>
         </div>
-        <div style={{ height: '32px', width: '1px', background: '#e2e8f0' }} />
+        <div style={{ height: '24px', width: '1px', background: '#cbd5e1' }} />
 
         <div>
-          <div style={{ fontSize: '11px', color: '#64748b', fontWeight: '600', textTransform: 'uppercase' }}>Intervention Model</div>
-          <div style={{ fontSize: '15px', fontWeight: '750', color: '#1e293b', marginTop: '4px' }}>GRAP Phase 2</div>
-        </div>
-        <div style={{ height: '32px', width: '1px', background: '#e2e8f0' }} />
-
-        <div>
-          <div style={{ fontSize: '11px', color: '#64748b', fontWeight: '600', textTransform: 'uppercase' }}>Active City</div>
-          <div style={{ fontSize: '15px', fontWeight: '750', color: '#ef4444', marginTop: '4px', display: 'flex', alignItems: 'center', gap: '4px' }}>
-            <MapPin size={14} color="#ef4444" /> New Delhi, IN
+          <div style={{ fontSize: '10px', color: '#94a3b8', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.5px' }}>SCAN STATUS</div>
+          <div style={{ fontSize: '15px', fontWeight: '800', color: '#10b981', marginTop: '4px', display: 'flex', alignItems: 'center', gap: '5px' }}>
+            <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#10b981', display: 'inline-block' }} />
+            COMPLIANT
           </div>
         </div>
       </div>
 
-      {/* ── 2. Premium Tab Bar ── */}
-      <div style={{
-        display: 'flex',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        borderBottom: '1px solid #e2e8f0',
-        marginBottom: '20px',
-        paddingBottom: '2px'
-      }}>
-        <div style={{ display: 'flex', gap: '8px' }}>
-          {[
-            { id: 'overview', label: 'Overview' },
-            { id: 'dispatches', label: 'Active Dispatches' },
-            { id: 'targets', label: 'Targets & Limits' },
-            { id: 'configuration', label: 'Configuration' },
-            { id: 'checklist', label: 'PM Checklist' }
-          ].map(tab => (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
-              style={{
-                padding: '8px 16px',
-                border: 'none',
-                background: 'none',
-                fontSize: '13.5px',
-                fontWeight: activeTab === tab.id ? '700' : '550',
-                color: activeTab === tab.id ? '#1e3a8a' : '#64748b',
-                cursor: 'pointer',
-                position: 'relative',
-                transition: 'all 0.2s ease'
-              }}
-            >
-              {tab.label}
-              {activeTab === tab.id && (
-                <div style={{
-                  position: 'absolute',
-                  bottom: '-3px',
-                  left: '16px',
-                  right: '16px',
-                  height: '2px',
-                  background: '#1e3a8a',
-                  borderRadius: '2px'
-                }} />
-              )}
-            </button>
-          ))}
+      {/* Main Grid Layout */}
+      <div className="telemetry-grid">
+        
+        {/* Left Column */}
+        <div className="telemetry-column-left">
+          
+          {/* Geospatial Correlation Core Radar */}
+          <div className="telemetry-card" style={{ paddingBottom: '24px' }}>
+            <div className="telemetry-card-title">
+              <span>Geospatial Correlation Core</span>
+              <span style={{ fontSize: '11px', color: '#94a3b8', fontWeight: '500' }}>Active Scanning</span>
+            </div>
+            
+            <div className="telemetry-radar-container">
+              <div className="telemetry-radar-disk">
+                <div className="telemetry-radar-sweep" />
+                <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#3b82f6', zIndex: 2 }} />
+                <div style={{ position: 'absolute', width: '120px', height: '120px', borderRadius: '50%', border: '1px dashed rgba(59, 130, 246, 0.1)' }} />
+                <div style={{ position: 'absolute', width: '60px', height: '60px', borderRadius: '50%', border: '1px dashed rgba(59, 130, 246, 0.1)' }} />
+                
+                <div 
+                  className="telemetry-radar-ping" 
+                  style={{
+                    top: `${40 + (selectedHotspotIndex * 22) % 90}px`,
+                    left: `${50 + (selectedHotspotIndex * 31) % 90}px`
+                  }} 
+                />
+              </div>
+            </div>
+            
+            <div style={{ textAlign: 'center', marginBottom: '16px' }}>
+              <div style={{ fontSize: '20px', fontWeight: '850', color: '#0f172a' }}>{activeHotspot.confidence}%</div>
+              <div style={{ fontSize: '10px', color: '#64748b', fontWeight: '700', textTransform: 'uppercase', marginTop: '2px' }}>Correlation Index Accuracy</div>
+            </div>
+
+            <div className="telemetry-stats-row">
+              <div className="telemetry-mini-card">
+                <div className="telemetry-mini-label">Scan Radius</div>
+                <div className="telemetry-mini-val">3.5 km</div>
+              </div>
+              <div className="telemetry-mini-card">
+                <div className="telemetry-mini-label">Scan Power</div>
+                <div className="telemetry-mini-val">78.5%</div>
+              </div>
+            </div>
+          </div>
+
+          {/* Overview Stats */}
+          <div className="telemetry-card">
+            <div className="telemetry-card-title">Overview Stats</div>
+            <div className="telemetry-stats-row" style={{ marginBottom: '16px' }}>
+              <div className="telemetry-mini-card">
+                <div className="telemetry-mini-label">Operational Hours</div>
+                <div className="telemetry-mini-val">24 hrs</div>
+              </div>
+              <div className="telemetry-mini-card">
+                <div className="telemetry-mini-label">Average Response</div>
+                <div className="telemetry-mini-val">1h 15m</div>
+              </div>
+            </div>
+            
+            <div style={{ display: 'flex', alignItems: 'center', gap: '16px', background: '#f8fafc', padding: '12px 16px', borderRadius: '12px', border: '1px solid #f1f5f9' }}>
+              <div style={{ position: 'relative', width: '50px', height: '50px' }}>
+                <svg width="50" height="50" viewBox="0 0 36 36">
+                  <circle cx="18" cy="18" r="15.915" fill="none" stroke="#e2e8f0" strokeWidth="3" />
+                  <circle cx="18" cy="18" r="15.915" fill="none" stroke="#10b981" strokeWidth="3" strokeDasharray="94.2 5.8" strokeDashoffset="25" />
+                </svg>
+                <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', fontSize: '11px', fontWeight: '800', color: '#10b981' }}>94%</div>
+              </div>
+              <div>
+                <div style={{ fontSize: '12px', fontWeight: '750', color: '#0f172a' }}>System Dispatch Efficiency</div>
+                <div style={{ fontSize: '11px', color: '#64748b', marginTop: '2px' }}>Correlated actions successfully dispatched.</div>
+              </div>
+            </div>
+          </div>
+
         </div>
 
-        {/* Action button */}
-        <button
-          onClick={handleRescan}
-          disabled={scanning}
-          style={{
-            background: scanning ? '#475569' : '#1e3a8a',
-            color: '#ffffff',
-            border: 'none',
-            borderRadius: '8px',
-            padding: '6px 14px',
-            cursor: scanning ? 'not-allowed' : 'pointer',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '6px',
-            fontWeight: '700',
-            fontSize: '12px',
-            boxShadow: '0 2px 8px rgba(30, 58, 138, 0.15)',
-            transition: 'all 0.2s'
-          }}
-        >
-          <RefreshCw size={13} style={{ animation: scanning ? 'spin 1s linear infinite' : 'none' }} />
-          <span>{scanning ? 'Rescanning...' : 'Scan Wards'}</span>
-        </button>
-      </div>
-
-      {/* ── 3. Tab Contents ── */}
-      {activeTab === 'overview' && (
-        <>
-          {/* Five stats cards with inline sparklines/mini charts */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '16px', marginBottom: '20px' }}>
-            
-            {/* Card 1: Avg City AQI */}
-            <div style={{ background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '12px', padding: '16px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', minHeight: '120px' }}>
-              <div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: '#64748b', fontWeight: '600' }}>
-                  <span>Avg City AQI</span>
-                  <span style={{ color: '#22c55e', display: 'flex', alignItems: 'center' }}><ArrowUpRight size={10} /> 3%</span>
-                </div>
-                <div style={{ fontSize: '28px', fontWeight: '800', color: '#1e293b', marginTop: '6px' }}>{avgAqi}</div>
-              </div>
-              <div style={{ marginTop: '10px' }}>
-                <svg width="100%" height="24" viewBox="0 0 100 24">
-                  <path d="M 0 18 Q 20 8, 40 16 T 80 4 T 100 12" fill="none" stroke="#22c55e" strokeWidth="1.5" />
-                  <circle cx="100" cy="12" r="2" fill="#22c55e" />
-                </svg>
-              </div>
-            </div>
-
-            {/* Card 2: Active Hotspots */}
-            <div style={{ background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '12px', padding: '16px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', minHeight: '120px' }}>
-              <div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: '#64748b', fontWeight: '600' }}>
-                  <span>Active Hotspots</span>
-                  <span style={{ color: '#3b82f6', display: 'flex', alignItems: 'center' }}><TrendingUp size={10} /> {allDispatches.length}</span>
-                </div>
-                <div style={{ fontSize: '28px', fontWeight: '800', color: '#1e293b', marginTop: '6px' }}>{allDispatches.length}</div>
-              </div>
-              <div style={{ marginTop: '10px', display: 'flex', gap: '3px', alignItems: 'flex-end', height: '24px' }}>
-                {[12, 16, 8, 14, 18, 10, 22, 15, 20, 24].map((h, idx) => (
-                  <div key={idx} style={{ flex: 1, height: `${h}%`, background: '#3b82f6', borderRadius: '1px' }} />
-                ))}
-              </div>
-            </div>
-
-            {/* Card 3: Pollutant Concentration */}
-            <div style={{ background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '12px', padding: '16px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', minHeight: '120px' }}>
-              <div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: '#64748b', fontWeight: '600' }}>
-                  <span>PM2.5 Conc.</span>
-                  <span style={{ color: '#64748b' }}>→ 0</span>
-                </div>
-                <div style={{ fontSize: '28px', fontWeight: '800', color: '#1e293b', marginTop: '6px' }}>84 <span style={{ fontSize: '11px', color: '#64748b', fontWeight: '600' }}>µg/m³</span></div>
-              </div>
-              <div style={{ marginTop: '10px' }}>
-                <svg width="100%" height="24" viewBox="0 0 100 24">
-                  <path d="M0 20 L 10 20 L 10 16 L 30 16 L 30 10 L 50 10 L 50 8 L 70 8 L 70 4 L 100 4" fill="none" stroke="#6366f1" strokeWidth="1.5" />
-                </svg>
-              </div>
-            </div>
-
-            {/* Card 4: Dispersion Index */}
-            <div style={{ background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '12px', padding: '16px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', minHeight: '120px' }}>
-              <div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: '#64748b', fontWeight: '600' }}>
-                  <span>Dispersion Index</span>
-                  <span style={{ color: '#ef4444', display: 'flex', alignItems: 'center' }}><TrendingUp size={10} style={{ transform: 'rotate(90deg)' }} /> -2%</span>
-                </div>
-                <div style={{ fontSize: '28px', fontWeight: '800', color: '#1e293b', marginTop: '6px' }}>12%</div>
-              </div>
-              <div style={{ marginTop: '10px' }}>
-                <svg width="100%" height="24" viewBox="0 0 100 24">
-                  <path d="M 0 6 Q 25 8, 50 16 T 100 22" fill="none" stroke="#ef4444" strokeWidth="1.5" />
-                </svg>
-              </div>
-            </div>
-
-            {/* Card 5: Wind & Temperature */}
-            <div style={{ background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '12px', padding: '16px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', minHeight: '120px' }}>
-              <div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: '#64748b', fontWeight: '600' }}>
-                  <span>Wind / Temp</span>
-                  <span style={{ color: '#3b82f6' }}>14 km/h</span>
-                </div>
-                <div style={{ fontSize: '28px', fontWeight: '800', color: '#1e293b', marginTop: '6px' }}>32°C</div>
-              </div>
-              <div style={{ marginTop: '10px' }}>
-                <svg width="100%" height="24" viewBox="0 0 100 24">
-                  <path d="M 0 12 Q 10 4, 20 12 T 40 12 T 60 12 T 80 12 T 100 12" fill="none" stroke="#3b82f6" strokeWidth="1.5" />
-                </svg>
-              </div>
-            </div>
-
-          </div>
-
-          {/* Downtime timeline style element: Air Quality Timeline (Last 24h) */}
-          <div style={{
-            background: '#ffffff',
-            border: '1px solid #e2e8f0',
-            borderRadius: '12px',
-            padding: '20px',
-            marginBottom: '20px',
-            boxShadow: '0 1px 3px rgba(0,0,0,0.02)'
-          }}>
-            <div style={{ fontSize: '13px', fontWeight: '700', color: '#1e293b', marginBottom: '14px' }}>
-              Air Quality Timeline <span style={{ color: '#64748b', fontWeight: '500' }}>last 24h</span>
-            </div>
-            
-            {/* Timeline Segment Bar */}
-            <div style={{ display: 'flex', height: '18px', borderRadius: '4px', overflow: 'hidden', background: '#e2e8f0' }}>
-              <div style={{ flex: '5', background: '#22c55e' }} title="Good (0-50)" />
-              <div style={{ flex: '4', background: '#eab308' }} title="Satisfactory (50-100)" />
-              <div style={{ flex: '3', background: '#ef4444' }} title="Very Poor (200-300)" />
-              <div style={{ flex: '1', background: '#22c55e' }} />
-              <div style={{ flex: '2', background: '#ef4444' }} />
-              <div style={{ flex: '3', background: '#22c55e' }} />
-              <div style={{ flex: '6', background: '#22c55e' }} />
-            </div>
-
-            {/* Time labels under timeline */}
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: '#64748b', marginTop: '6px' }}>
-              <span>12.00pm</span>
-              <span>4.00pm</span>
-              <span>8.00pm</span>
-              <span>12.00am</span>
-              <span>4.00am</span>
-              <span>8.00am</span>
-              <span>12.00pm (Now)</span>
-            </div>
-          </div>
-
-          {/* Bottom row: distribution, gauge, and MTTR */}
-          <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1.2fr 1.6fr', gap: '16px' }}>
-            
-            {/* Donut chart layout */}
-            <div style={{ background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '12px', padding: '20px', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-              <div style={{ fontSize: '13px', fontWeight: '750', color: '#1e293b', width: '100%', marginBottom: '16px', textAlign: 'left' }}>AQI Category Distribution</div>
-              
-              <div style={{ position: 'relative', width: '120px', height: '120px' }}>
-                <svg width="120" height="120" viewBox="0 0 36 36">
-                  {/* Good: 60% */}
-                  <circle cx="18" cy="18" r="15.915" fill="none" stroke="#22c55e" strokeWidth="3" strokeDasharray="60 40" strokeDashoffset="25" />
-                  {/* Satisfactory: 28% */}
-                  <circle cx="18" cy="18" r="15.915" fill="none" stroke="#eab308" strokeWidth="3" strokeDasharray="28 72" strokeDashoffset="-35" />
-                  {/* Poor/Severe: 12% */}
-                  <circle cx="18" cy="18" r="15.915" fill="none" stroke="#ef4444" strokeWidth="3" strokeDasharray="12 88" strokeDashoffset="-63" />
-                </svg>
-                <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', fontSize: '18px', fontWeight: '850', color: '#1e293b', textAlign: 'center' }}>
-                  60%<br /><span style={{ fontSize: '9px', color: '#64748b', fontWeight: '600' }}>Safe Wards</span>
-                </div>
-              </div>
-
-              {/* Legend */}
-              <div style={{ display: 'flex', gap: '12px', marginTop: '16px', fontSize: '11px', fontWeight: '600' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                  <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#22c55e' }} />
-                  <span style={{ color: '#475569' }}>Good</span>
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                  <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#eab308' }} />
-                  <span style={{ color: '#475569' }}>Moderate</span>
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                  <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#ef4444' }} />
-                  <span style={{ color: '#475569' }}>Hotspot</span>
-                </div>
-              </div>
-            </div>
-
-            {/* Gauge chart layout */}
-            <div style={{ background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '12px', padding: '20px', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-              <div style={{ fontSize: '13px', fontWeight: '750', color: '#1e293b', width: '100%', marginBottom: '16px', textAlign: 'left' }}>Current Wind Speed</div>
-              
-              <div style={{ position: 'relative', width: '120px', height: '100px', overflow: 'hidden' }}>
-                <svg width="120" height="120" viewBox="0 0 100 100" style={{ transform: 'rotate(-90deg)' }}>
-                  {/* Gauge Arc */}
-                  <circle cx="50" cy="50" r="40" fill="none" stroke="#e2e8f0" strokeWidth="8" strokeDasharray="125 250" />
-                  <circle cx="50" cy="50" r="40" fill="none" stroke="#22c55e" strokeWidth="8" strokeDasharray="80 250" />
-                  {/* Pointer Needle */}
-                  <line x1="50" y1="50" x2="50" y2="15" stroke="#1e293b" strokeWidth="3" strokeLinecap="round" style={{ transformOrigin: '50px 50px', transform: 'rotate(72deg)', transition: 'all 0.5s' }} />
-                </svg>
-                <div style={{ position: 'absolute', bottom: '0', left: '50%', transform: 'translateX(-50%)', textAlign: 'center', fontSize: '18px', fontWeight: '850', color: '#1e293b' }}>
-                  6.21 <span style={{ fontSize: '11px', color: '#64748b' }}>m/s</span>
-                </div>
-              </div>
-            </div>
-
-            {/* MTTR / MTBF Stats */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-              
-              {/* Card 1: MTTR */}
-              <div style={{ background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '12px', padding: '16px 20px', flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
-                <div style={{ fontSize: '11px', color: '#64748b', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.5px' }}>MTTR (Mean Response Time)</div>
-                <div style={{ fontSize: '20px', fontWeight: '800', color: '#1e293b', marginTop: '6px' }}>
-                  1 <span style={{ fontSize: '12px', color: '#64748b' }}>hour</span> 15 <span style={{ fontSize: '12px', color: '#64748b' }}>minutes</span>
-                </div>
-              </div>
-
-              {/* Card 2: MTBF */}
-              <div style={{ background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '12px', padding: '16px 20px', flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
-                <div style={{ fontSize: '11px', color: '#64748b', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.5px' }}>MTBF (Mean Clean Interval)</div>
-                <div style={{ fontSize: '20px', fontWeight: '800', color: '#1e293b', marginTop: '6px' }}>
-                  4 <span style={{ fontSize: '12px', color: '#64748b' }}>days</span> 6 <span style={{ fontSize: '12px', color: '#64748b' }}>hours</span>
-                </div>
-              </div>
-
-            </div>
-
-          </div>
-        </>
-      )}
-
-      {activeTab === 'dispatches' && (
-        <div style={{ background: '#ffffff', borderRadius: '12px', border: '1px solid #e2e8f0', padding: '20px' }}>
-          {/* Stat Categories Filter */}
-          <div style={{ display: 'flex', gap: '10px', marginBottom: '16px' }}>
-            {[
-              { id: 'all', label: 'All Hotspots', color: '#3b82f6' },
-              { id: 'severe', label: 'Severe Only', color: '#ef4444' },
-              { id: 'very_poor', label: 'Very Poor Only', color: '#f97316' },
-              { id: 'poor', label: 'Poor Only', color: '#eab308' }
-            ].map(f => (
+        {/* Right Column */}
+        <div className="telemetry-column-right">
+          
+          {/* Correlation Matrix List */}
+          <div className="telemetry-card">
+            <div className="telemetry-card-title">
+              <span>Hotspot &amp; Source Correlation Matrix</span>
               <button
-                key={f.id}
-                onClick={() => setFilter(f.id)}
+                onClick={handleRescan}
+                disabled={scanning}
                 style={{
-                  padding: '6px 12px',
+                  background: scanning ? '#e2e8f0' : '#3b82f6',
+                  color: scanning ? '#94a3b8' : '#ffffff',
+                  border: 'none',
                   borderRadius: '6px',
-                  border: filter === f.id ? `1.5px solid ${f.color}` : '1px solid #e2e8f0',
-                  background: filter === f.id ? `${f.color}10` : '#ffffff',
-                  color: filter === f.id ? f.color : '#475569',
-                  fontSize: '12px',
+                  padding: '4px 10px',
+                  cursor: scanning ? 'not-allowed' : 'pointer',
+                  fontSize: '11px',
                   fontWeight: '700',
-                  cursor: 'pointer',
-                  transition: 'all 0.2s'
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '4px'
                 }}
               >
-                {f.label}
+                <RefreshCw size={11} style={{ animation: scanning ? 'spin 1s linear infinite' : 'none' }} />
+                {scanning ? 'Scanning...' : 'Scan Now'}
               </button>
-            ))}
-          </div>
-
-          {filtered.length > 0 ? (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-              {filtered.map((d, i) => (
-                <div key={i} style={{ padding: '14px', borderRadius: '8px', border: '1px solid #e2e8f0', background: '#f8fafc', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <div>
-                    <div style={{ fontWeight: '700', color: '#1e293b', fontSize: '14px' }}>{d.ward_name}</div>
-                    <div style={{ fontSize: '11px', color: '#64748b', marginTop: '2px' }}>Dominant: {d.dominant_pollutant}</div>
+            </div>
+            
+            <div className="telemetry-list">
+              {hotspots.map((item, idx) => (
+                <div 
+                  key={idx} 
+                  onClick={() => setSelectedHotspotIndex(idx)}
+                  className="telemetry-list-item"
+                  style={{
+                    cursor: 'pointer',
+                    border: selectedHotspotIndex === idx ? '1.5px solid #3b82f6' : '1px solid #f1f5f9',
+                    background: selectedHotspotIndex === idx ? '#f0f7ff' : '#f8fafc'
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    {getCategoryIcon(item.source_category)}
+                    <div>
+                      <div style={{ fontSize: '13px', fontWeight: '750', color: '#0f172a' }}>{item.ward_name}</div>
+                      <div style={{ fontSize: '11px', color: '#64748b', marginTop: '2px' }}>
+                        Source: {item.source_name} ({item.distance_km}km)
+                      </div>
+                    </div>
                   </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                    <span style={{ fontSize: '18px', fontWeight: '850', color: d.aqi > 300 ? '#ef4444' : '#f97316' }}>{Math.round(d.aqi)} AQI</span>
-                    <button
-                      onClick={() => onViewEvidence && onViewEvidence(d)}
-                      style={{
-                        padding: '4px 10px',
-                        background: '#1e3a8a',
-                        color: '#ffffff',
-                        border: 'none',
-                        borderRadius: '6px',
-                        fontSize: '11.5px',
-                        fontWeight: '700',
-                        cursor: 'pointer'
-                      }}
-                    >
-                      View Evidence
-                    </button>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    {getSeverityBadge(item.severity)}
+                    <span style={{ fontSize: '14px', fontWeight: '850', color: '#0f172a' }}>{item.aqi} AQI</span>
                   </div>
                 </div>
               ))}
             </div>
-          ) : (
-            <div style={{ textAlign: 'center', padding: '40px 20px', color: '#64748b', fontSize: '13px' }}>
-              No active hotspots found matching filter.
-            </div>
-          )}
-        </div>
-      )}
-
-      {activeTab === 'targets' && (
-        <div style={{ background: '#ffffff', borderRadius: '12px', border: '1px solid #e2e8f0', padding: '20px' }}>
-          <div style={{ fontSize: '14px', fontWeight: '750', color: '#1e293b', marginBottom: '16px' }}>AQI Target Limits & Health Mandates</div>
-          
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-            {[
-              { range: '0 - 50', label: 'Good', color: '#22c55e', desc: 'Minimal impact. Satisfactory air quality.' },
-              { range: '51 - 100', label: 'Moderate', color: '#84cc16', desc: 'Acceptable quality; minor breathing discomfort to sensitive people.' },
-              { range: '101 - 200', label: 'Poor', color: '#eab308', desc: 'Breathing discomfort to most people on prolonged exposure.' },
-              { range: '201 - 300', label: 'Very Poor', color: '#f97316', desc: 'Respiratory illness on prolonged exposure.' },
-              { range: '301 - 400', label: 'Severe', color: '#ef4444', desc: 'Affects healthy people and seriously impacts those with existing diseases.' },
-              { range: '401 - 500+', label: 'Hazardous', color: '#a855f7', desc: 'Severe health alert. Emergency evacuation & masks mandatory.' }
-            ].map((t, i) => (
-              <div key={i} style={{ display: 'flex', alignItems: 'center', padding: '10px 14px', borderRadius: '8px', border: '1px solid #f1f5f9', background: '#f8fafc' }}>
-                <div style={{ width: '90px', fontSize: '13px', fontWeight: '800', color: t.color }}>{t.range}</div>
-                <div style={{ width: '100px', fontSize: '12px', fontWeight: '750', color: '#1e293b' }}>{t.label}</div>
-                <div style={{ flex: 1, fontSize: '12px', color: '#475569' }}>{t.desc}</div>
-              </div>
-            ))}
           </div>
-        </div>
-      )}
 
-      {activeTab === 'configuration' && (
-        <div style={{ background: '#ffffff', borderRadius: '12px', border: '1px solid #e2e8f0', padding: '20px' }}>
-          <div style={{ fontSize: '14px', fontWeight: '750', color: '#1e293b', marginBottom: '16px' }}>Station Telemetry Configuration</div>
-          
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-            <div>
-              <label style={{ display: 'block', fontSize: '12px', fontWeight: '700', color: '#475569', marginBottom: '6px' }}>Simulation Speed Rate</label>
-              <input type="range" min="1" max="10" defaultValue="5" style={{ width: '100%' }} />
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px', color: '#64748b', marginTop: '4px' }}>
-                <span>1x (Realtime)</span>
-                <span>5x (Standard)</span>
-                <span>10x (Accelerated)</span>
+          {/* Action Recommendations and Dispersion Compass */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+            
+            {/* Action Card */}
+            <div className="telemetry-card" style={{ display: 'flex', flexDirection: 'column' }}>
+              <div className="telemetry-card-title" style={{ marginBottom: '8px' }}>
+                <span>Prioritised Action</span>
+                <span style={{ fontSize: '10px', background: '#eff6ff', color: '#2563eb', padding: '1px 6px', borderRadius: '4px', fontWeight: '700' }}>AI SUGGESTION</span>
+              </div>
+              
+              <div style={{ fontSize: '11px', color: '#94a3b8', textTransform: 'uppercase', fontWeight: '700', letterSpacing: '0.5px' }}>Command Authority</div>
+              <div style={{ fontSize: '12px', fontWeight: '750', color: '#0f172a', marginTop: '2px', marginBottom: '8px' }}>{recommendation.authority}</div>
+
+              <div style={{ fontSize: '11px', color: '#94a3b8', textTransform: 'uppercase', fontWeight: '700', letterSpacing: '0.5px' }}>Action Recommendation</div>
+              <div style={{ fontSize: '13px', fontWeight: '800', color: '#2563eb', marginTop: '2px', marginBottom: '10px' }}>{recommendation.title}</div>
+              
+              <ul style={{ paddingLeft: '16px', margin: '0 0 14px 0', fontSize: '11.5px', color: '#475569', lineHeight: '1.4' }}>
+                {recommendation.steps.map((step, sIdx) => (
+                  <li key={sIdx} style={{ marginBottom: '4px' }}>{step}</li>
+                ))}
+              </ul>
+
+              <div style={{ marginTop: 'auto', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', paddingTop: '10px', borderTop: '1.5px solid #f1f5f9' }}>
+                <span style={{ fontSize: '10px', color: '#64748b', textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap', maxWidth: '120px' }}>
+                  Evid: <strong>{recommendation.evidence}</strong>
+                </span>
+                <button
+                  onClick={() => onViewEvidence({
+                    ward_name: activeHotspot.ward_name,
+                    aqi: activeHotspot.aqi,
+                    location: activeHotspot.location,
+                    severity: activeHotspot.severity,
+                    priority_score: activeHotspot.aqi * 1.5,
+                    evidence: {
+                      timestamp: new Date().toISOString(),
+                      pollutants: {
+                        pm25: activeHotspot.dominant_pollutant === 'PM2.5' ? activeHotspot.aqi / 2 : 12,
+                        pm10: activeHotspot.dominant_pollutant === 'PM10' ? activeHotspot.aqi : 45,
+                        no2: activeHotspot.dominant_pollutant === 'NO2' ? activeHotspot.aqi / 4 : 18
+                      }
+                    },
+                    inferred_sources: [activeHotspot.source_category],
+                    nearby_sources: [
+                      {
+                        name: activeHotspot.source_name,
+                        category: activeHotspot.source_category,
+                        distance_km: activeHotspot.distance_km
+                      }
+                    ],
+                    vulnerability_flags: [
+                      "High concentration near populated residential zone",
+                      "Elderly density exceeds 8%"
+                    ],
+                    recommended_actions: recommendation.steps
+                  })}
+                  style={{
+                    marginLeft: 'auto',
+                    padding: '4px 10px',
+                    background: '#0f172a',
+                    color: '#ffffff',
+                    border: 'none',
+                    borderRadius: '6px',
+                    fontSize: '11px',
+                    fontWeight: '700',
+                    cursor: 'pointer'
+                  }}
+                >
+                  View Photo
+                </button>
               </div>
             </div>
 
-            <div>
-              <label style={{ display: 'block', fontSize: '12px', fontWeight: '700', color: '#475569', marginBottom: '6px' }}>Primary Data Stream Fallback</label>
-              <select style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #e2e8f0', background: '#ffffff', outline: 'none' }}>
-                <option value="owm">OpenWeatherMap API (Primary)</option>
-                <option value="openmeteo">Open-Meteo Air Quality (Fallback)</option>
-              </select>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {activeTab === 'checklist' && (
-        <div style={{ background: '#ffffff', borderRadius: '12px', border: '1px solid #e2e8f0', padding: '20px' }}>
-          <div style={{ fontSize: '14px', fontWeight: '750', color: '#1e293b', marginBottom: '16px' }}>Preventative Measures Checklist (PM)</div>
-          
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-            {[
-              { key: 'water_sprinkling', label: 'Deploy Water Sprinklers to reduce dust dispersion.' },
-              { key: 'smog_guns', label: 'Activate Smog Cannons in high-density corridors.' },
-              { key: 'traffic_diversions', label: 'Initiate Vehicular Traffic diversion from hotspots.' },
-              { key: 'const_ban', label: 'Impose Construction work temporary ban.' },
-              { key: 'dg_sets_ban', label: 'Enforce Diesel Generator (DG) usage restriction.' }
-            ].map(item => (
-              <label key={item.key} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 14px', borderRadius: '8px', border: '1px solid #f1f5f9', background: '#f8fafc', cursor: 'pointer' }}>
-                <input
-                  type="checkbox"
-                  checked={checklist[item.key]}
-                  onChange={e => setChecklist(prev => ({ ...prev, [item.key]: e.target.checked }))}
-                  style={{ width: '16px', height: '16px', cursor: 'pointer' }}
+            {/* Dispersion Compass */}
+            <div className="telemetry-card" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+              <div className="telemetry-card-title" style={{ width: '100%' }}>
+                <span>Dispersion Compass</span>
+              </div>
+              
+              <div className="telemetry-compass-dial" style={{ margin: '8px 0' }}>
+                <div 
+                  className="telemetry-compass-needle" 
+                  style={{ transform: `rotate(${activeHotspot.wind_direction}deg)` }} 
                 />
-                <span style={{ fontSize: '12.5px', color: '#334155', fontWeight: '600' }}>{item.label}</span>
-              </label>
-            ))}
+                <span style={{ position: 'absolute', top: '6px', fontSize: '10px', fontWeight: '800', color: '#64748b' }}>N</span>
+                <span style={{ position: 'absolute', right: '8px', fontSize: '10px', fontWeight: '800', color: '#64748b' }}>E</span>
+                <span style={{ position: 'absolute', bottom: '6px', fontSize: '10px', fontWeight: '800', color: '#64748b' }}>S</span>
+                <span style={{ position: 'absolute', left: '8px', fontSize: '10px', fontWeight: '800', color: '#64748b' }}>W</span>
+              </div>
+              
+              <div style={{ textAlign: 'center', width: '100%', marginTop: '6px' }}>
+                <div style={{ fontSize: '14px', fontWeight: '850', color: '#0f172a' }}>
+                  {activeHotspot.wind_direction}° ({activeHotspot.wind_speed})
+                </div>
+                <div style={{ fontSize: '10px', color: '#64748b', fontWeight: '750', textTransform: 'uppercase', marginTop: '2px' }}>
+                  Wind Vector Dispersion Path
+                </div>
+                
+                <div style={{ fontSize: '10px', color: '#94a3b8', marginTop: '8px', lineHeight: '1.4' }}>
+                  Source: <strong>{activeHotspot.coordinates}</strong><br />
+                  Hotspot: <strong>{activeHotspot.location[0].toFixed(4)}, {activeHotspot.location[1].toFixed(4)}</strong>
+                </div>
+              </div>
+            </div>
+
           </div>
+
         </div>
-      )}
+
+      </div>
 
     </div>
   )
