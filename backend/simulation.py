@@ -915,7 +915,12 @@ class SimulationEngine:
         """Generate AQI readings — fetches REAL data via the hybrid OpenAQ v3 / Open-Meteo pipeline."""
         cache_key = f"readings_{city_key}"
         if self._is_cached(cache_key):
+            age = time.time() - self._cache_ts.get(cache_key, 0)
+            remaining = max(0, int(self._cache_ttl - age))
+            print(f"[Cache Hit] '{city_key}' - Serving cached data ({remaining}s remaining)")
             return self._cache[cache_key]
+        else:
+            print(f"[Cache Miss] '{city_key}' - Fetching fresh live data...")
 
         ts = datetime.now(timezone.utc)
         readings: List[Dict[str, Any]] = []
