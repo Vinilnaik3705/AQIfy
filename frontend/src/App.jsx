@@ -179,6 +179,39 @@ export default function App() {
   const [isAdvisoryOpen, setIsAdvisoryOpen] = useState(false)
   const [isAlertSubscriptionOpen, setIsAlertSubscriptionOpen] = useState(false)
 
+  // Refs for closing popups on clicking outside
+  const advisoryRef = useRef(null)
+  const subscriptionRef = useRef(null)
+
+  const handleToggleAdvisory = useCallback(() => {
+    setIsAdvisoryOpen(prev => {
+      const next = !prev
+      if (next) setIsAlertSubscriptionOpen(false)
+      return next
+    })
+  }, [])
+
+  const handleToggleAlert = useCallback(() => {
+    setIsAlertSubscriptionOpen(prev => {
+      const next = !prev
+      if (next) setIsAdvisoryOpen(false)
+      return next
+    })
+  }, [])
+
+  useEffect(() => {
+    function handleClickOutside(event) {
+      if (isAdvisoryOpen && advisoryRef.current && !advisoryRef.current.contains(event.target)) {
+        setIsAdvisoryOpen(false)
+      }
+      if (isAlertSubscriptionOpen && subscriptionRef.current && !subscriptionRef.current.contains(event.target)) {
+        setIsAlertSubscriptionOpen(false)
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside)
+    return () => document.removeEventListener("mousedown", handleClickOutside)
+  }, [isAdvisoryOpen, isAlertSubscriptionOpen])
+
   // ── Data Fetching ────────────────────────────────────────────────────
 
   const loadState = useCallback(async (isInitial = false) => {
@@ -418,31 +451,35 @@ export default function App() {
       </div>
 
       {/* ── Citizens Health Advisory Floating Widget ─────────────────── */}
-      <CitizensAdvisoryPopup
-        state={state}
-        advisory={advisory}
-        lang={advLang}
-        onChangeLang={setAdvLang}
-        profile={advProfile}
-        onChangeProfile={setAdvProfile}
-        selectedWard={selectedWard}
-        onSelectWard={(w) => { handleSelectWard(w); loadAdvisory(w.id, advLang, advProfile) }}
-        isOpen={isAdvisoryOpen}
-        onToggle={() => setIsAdvisoryOpen(!isAdvisoryOpen)}
-        onLoadAdvisory={loadAdvisory}
-      />
+      <div ref={advisoryRef}>
+        <CitizensAdvisoryPopup
+          state={state}
+          advisory={advisory}
+          lang={advLang}
+          onChangeLang={setAdvLang}
+          profile={advProfile}
+          onChangeProfile={setAdvProfile}
+          selectedWard={selectedWard}
+          onSelectWard={(w) => { handleSelectWard(w); loadAdvisory(w.id, advLang, advProfile) }}
+          isOpen={isAdvisoryOpen}
+          onToggle={handleToggleAdvisory}
+          onLoadAdvisory={loadAdvisory}
+        />
+      </div>
 
       {/* ── Personal Alert Subscription Floating Widget ─────────────── */}
-      <PersonalAlertSubscriptionPopup
-        state={state}
-        profile={advProfile}
-        onChangeProfile={setAdvProfile}
-        selectedWard={selectedWard}
-        lang={advLang}
-        isOpen={isAlertSubscriptionOpen}
-        onToggle={() => setIsAlertSubscriptionOpen(!isAlertSubscriptionOpen)}
-        onLoadAdvisory={loadAdvisory}
-      />
+      <div ref={subscriptionRef}>
+        <PersonalAlertSubscriptionPopup
+          state={state}
+          profile={advProfile}
+          onChangeProfile={setAdvProfile}
+          selectedWard={selectedWard}
+          lang={advLang}
+          isOpen={isAlertSubscriptionOpen}
+          onToggle={handleToggleAlert}
+          onLoadAdvisory={loadAdvisory}
+        />
+      </div>
 
       {/* ── Evidence Modal ───────────────────────────────────────────── */}
       {evidenceModal && (
