@@ -14,8 +14,10 @@ logger = logging.getLogger("AQIForecaster")
 HORIZONS = [6, 12, 24, 36, 48, 72]          # anchor forecast horizons (hours)
 HISTORY_DAYS = 30                            # days of history to fetch for training
 RETRAIN_HOURS = 6                            # hours between model retrains
-GBM_PARAMS = dict(n_estimators=120, max_depth=5, learning_rate=0.08,
-                  subsample=0.85, min_samples_leaf=8, random_state=42)
+# NOTE on loss='squared_error': Huber loss was dampening large AQI deltas as "outliers",
+# causing flat predictions. Squared error treats rush-hour spikes as real signal.
+GBM_PARAMS = dict(n_estimators=200, max_depth=7, learning_rate=0.06,
+                  subsample=0.85, min_samples_leaf=3, random_state=42)
 QUANTILE_LO = 0.10
 QUANTILE_HI = 0.90
 
@@ -91,15 +93,29 @@ class AQIForecaster:
             if not times:
                 return None
 
-            # Reverse-map US AQI sub-indices to realistic PM concentrations
-            raw_us_pm25 = aq_data.get("us_aqi_pm2_5", [])
-            raw_us_pm10 = aq_data.get("us_aqi_pm10", [])
+            # Use raw PM concentrations from CAMS with urban calibration applied.
+            # CAMS global model under-represents ground-level urban pollution.
+            # Apply the same calibration corrections used for current readings
+            # (from simulation.py) so the training data reflects realistic
+            # ground-station-level AQI dynamics rather than smoothed global model.
+            raw_pm25 = aq_data.get("pm2_5", [])
+            raw_pm10 = aq_data.get("pm10", [])
             pm25_list, pm10_list = [], []
             for idx in range(len(times)):
-                us25 = raw_us_pm25[idx] if idx < len(raw_us_pm25) and raw_us_pm25[idx] is not None else 0.0
-                us10 = raw_us_pm10[idx] if idx < len(raw_us_pm10) and raw_us_pm10[idx] is not None else 0.0
-                pm25_list.append(_us_aqi_to_pm25(us25))
-                pm10_list.append(_us_aqi_to_pm10(us10))
+                pm25_raw = raw_pm25[idx] if idx < len(raw_pm25) and raw_pm25[idx] is not None else 0.0
+                pm10_raw = raw_pm10[idx] if idx < len(raw_pm10) and raw_pm10[idx] is not None else 0.0
+                # CAMS calibration: CAMS overestimates at low levels, underestimates at
+                # high levels in urban areas. Apply gentle scaling that preserves diurnal
+                # variation while anchoring to realistic ground-level values.
+                # Above 30 µg/m³, CAMS PM2.5 is ~30% too high relative to stations;
+                # below, it's reasonably accurate.
+                if pm25_raw > 30.0:
+                    pm25_cal = 30.0 + (pm25_raw - 30.0) * 0.7
+                else:
+                    pm25_cal = pm25_raw
+                pm10_cal = min(pm10_raw, pm25_cal * 2.5)
+                pm25_list.append(pm25_cal)
+                pm10_list.append(pm10_cal)
 
             safe = lambda lst, default=0.0: [v if v is not None else default for v in lst]
 
@@ -107,9 +123,9 @@ class AQIForecaster:
                 "time": times,
                 "pm2_5": pm25_list,
                 "pm10": pm10_list,
-                "no2": safe(aq_data.get("nitrogen_dioxide", [])),
-                "so2": safe(aq_data.get("sulphur_dioxide", [])),
-                "o3": safe(aq_data.get("ozone", [])),
+                "no2": [max(0.0, (v if v is not None else 0.0) * 0.5) for v in aq_data.get("nitrogen_dioxide", [])],
+                "so2": [max(0.0, (v if v is not None else 0.0) * 0.2) for v in aq_data.get("sulphur_dioxide", [])],
+                "o3": [max(0.0, (v if v is not None else 0.0) * 0.35) for v in aq_data.get("ozone", [])],
                 "co": [co / 1000.0 if co is not None else 0.0
                        for co in aq_data.get("carbon_monoxide", [])],
                 "temp": safe(weather_data.get("temperature_2m", []), 25.0),
@@ -233,6 +249,11 @@ class AQIForecaster:
             aqi_lag6 = aqi_series[max(0, i - 6)]
             aqi_lag24 = aqi_series[max(0, i - 24)]
 
+            # AQI momentum: how fast is AQI changing in the last few hours?
+            momentum_1h = aqi_now - aqi_lag1
+            momentum_3h = aqi_now - aqi_lag3
+            momentum_6h = aqi_now - aqi_lag6
+
             # Rolling stats
             mean6, std6, _, _ = self._rolling_stats(aqi_series, i, 6)
             mean24, std24, min24, max24 = self._rolling_stats(aqi_series, i, 24)
@@ -241,6 +262,7 @@ class AQIForecaster:
             ws_now = data["wind_speed"][i] or 5.0
             hum_now = data["humidity"][i] or 50.0
             pres_now = data["pressure"][i] or 1013.0
+            temp_now = data["temp"][i] or 25.0
 
             for h in HORIZONS:
                 target_idx = i + h
@@ -264,19 +286,35 @@ class AQIForecaster:
                 is_calm = 1.0 if ws_h < 2.0 else 0.0             # stagnation flag
                 pressure_trend = pres_h - pres_now                # falling → buildup
                 humidity_change = hum_h - hum_now
+                temp_humidity = temp_h * hum_h / 100.0            # heat-moisture stress
 
                 # Precipitation washout: has it rained in the 6h window before t+h?
                 precip_start = max(0, target_idx - 6)
                 precip_window = data["precipitation"][precip_start:target_idx + 1]
                 precip_washout = 1.0 if any((p or 0.0) > 0.5 for p in precip_window) else 0.0
 
-                # ── Temporal / calendar ──
+                # ── Temporal / calendar (rich) ──
                 dt_h = datetime.fromisoformat(times[target_idx])
-                hour_sin = np.sin(2 * np.pi * dt_h.hour / 24)
-                hour_cos = np.cos(2 * np.pi * dt_h.hour / 24)
+                target_hour = dt_h.hour
+                hour_sin = np.sin(2 * np.pi * target_hour / 24)
+                hour_cos = np.cos(2 * np.pi * target_hour / 24)
                 dow = dt_h.weekday()
                 is_weekend = 1.0 if dow >= 5 else 0.0
-                is_rush = 1.0 if dt_h.hour in (8, 9, 10, 18, 19, 20, 21) else 0.0
+
+                # Fine-grained traffic/activity hour bins
+                is_morning_rush = 1.0 if target_hour in (7, 8, 9, 10) else 0.0
+                is_evening_rush = 1.0 if target_hour in (17, 18, 19, 20, 21) else 0.0
+                is_midday = 1.0 if target_hour in (11, 12, 13, 14, 15, 16) else 0.0
+                is_night = 1.0 if target_hour in (22, 23, 0, 1, 2, 3, 4, 5, 6) else 0.0
+
+                # ── Temporal × city/weather interactions ──
+                # These let the GBM learn "rush hour in a polluted city with
+                # calm wind → large AQI increase" directly from CAMS diurnal data
+                rush_any = max(is_morning_rush, is_evening_rush)
+                rush_x_baseline = rush_any * city_baseline_aqi / 100.0
+                rush_x_stagnation = rush_any * is_calm
+                rush_x_weekend = rush_any * (1.0 - is_weekend)  # weekday rush matters more
+                calm_x_night = is_calm * is_night  # nighttime inversion + no wind
 
                 # Wind direction sin/cos
                 wd_rad = np.radians(wd_h)
@@ -286,17 +324,23 @@ class AQIForecaster:
                     aqi_now, aqi_lag1, aqi_lag3, aqi_lag6, aqi_lag24,
                     city_baseline_aqi,
                     float(h),  # horizon indicator
+                    # Momentum (3)
+                    momentum_1h, momentum_3h, momentum_6h,
                     # Rolling stats (6)
                     mean6, std6, mean24, std24, min24, max24,
                     # Weather at t+h (6)
                     ws_h, np.sin(wd_rad), np.cos(wd_rad), hum_h, temp_h, pres_h,
                     # Precipitation at t+h (1)
                     prec_h,
-                    # Interactions (6)
+                    # Interactions (7)
                     ventilation, wind_change, is_calm, pressure_trend,
-                    humidity_change, precip_washout,
-                    # Temporal (4)
-                    hour_sin, hour_cos, is_weekend, is_rush,
+                    humidity_change, precip_washout, temp_humidity,
+                    # Temporal rich (6)
+                    hour_sin, hour_cos, is_weekend,
+                    is_morning_rush, is_evening_rush, is_midday,
+                    # Temporal × context interactions (4)
+                    rush_x_baseline, rush_x_stagnation,
+                    rush_x_weekend, calm_x_night,
                 ]
 
                 datasets[h][0].append(feature_row)
@@ -387,7 +431,7 @@ class AQIForecaster:
                     X_tr, y_tr = X[train_idx], y_delta[train_idx]
                     X_vl, y_vl = X[val_idx], y_delta[val_idx]
 
-                    m = GradientBoostingRegressor(loss="huber", **GBM_PARAMS)
+                    m = GradientBoostingRegressor(loss="squared_error", **GBM_PARAMS)
                     m.fit(X_tr, y_tr)
                     preds = m.predict(X_vl)
 
@@ -406,8 +450,8 @@ class AQIForecaster:
                 all_dir_total += fold_dir_total
 
                 # ── Train final models on all data ──
-                # Point estimate (Huber loss — robust to spikes)
-                model = GradientBoostingRegressor(loss="huber", **GBM_PARAMS)
+                # Point estimate (squared_error — preserves large AQI swings as signal)
+                model = GradientBoostingRegressor(loss="squared_error", **GBM_PARAMS)
                 model.fit(X, y_delta)
                 models[h] = model
 
@@ -475,6 +519,11 @@ class AQIForecaster:
         aqi_lag6 = aqi_series[max(0, now_idx - 6)]
         aqi_lag24 = aqi_series[max(0, now_idx - 24)]
 
+        # AQI momentum
+        momentum_1h = aqi_now - aqi_lag1
+        momentum_3h = aqi_now - aqi_lag3
+        momentum_6h = aqi_now - aqi_lag6
+
         mean6, std6, _, _ = self._rolling_stats(aqi_series, now_idx, 6)
         mean24, std24, min24, max24 = self._rolling_stats(aqi_series, now_idx, 24)
 
@@ -506,6 +555,7 @@ class AQIForecaster:
         is_calm = 1.0 if ws_h < 2.0 else 0.0
         pressure_trend = pres_h - pres_now
         humidity_change = hum_h - hum_now
+        temp_humidity = temp_h * hum_h / 100.0
 
         # Precipitation washout: check forecast 6h window before t+h
         precip_washout = 0.0
@@ -517,22 +567,47 @@ class AQIForecaster:
 
         # Temporal at t+h
         future_dt = datetime.now() + timedelta(hours=h)
-        hour_sin = np.sin(2 * np.pi * future_dt.hour / 24)
-        hour_cos = np.cos(2 * np.pi * future_dt.hour / 24)
+        target_hour = future_dt.hour
+        hour_sin = np.sin(2 * np.pi * target_hour / 24)
+        hour_cos = np.cos(2 * np.pi * target_hour / 24)
         is_weekend = 1.0 if future_dt.weekday() >= 5 else 0.0
-        is_rush = 1.0 if future_dt.hour in (8, 9, 10, 18, 19, 20, 21) else 0.0
+
+        # Fine-grained traffic/activity hour bins
+        is_morning_rush = 1.0 if target_hour in (7, 8, 9, 10) else 0.0
+        is_evening_rush = 1.0 if target_hour in (17, 18, 19, 20, 21) else 0.0
+        is_midday = 1.0 if target_hour in (11, 12, 13, 14, 15, 16) else 0.0
+        is_night = 1.0 if target_hour in (22, 23, 0, 1, 2, 3, 4, 5, 6) else 0.0
+
+        # Interactions
+        rush_any = max(is_morning_rush, is_evening_rush)
+        rush_x_baseline = rush_any * city_baseline_aqi / 100.0
+        rush_x_stagnation = rush_any * is_calm
+        rush_x_weekend = rush_any * (1.0 - is_weekend)
+        calm_x_night = is_calm * is_night
 
         wd_rad = np.radians(wd_h)
 
         return [
+            # Anchor / persistence (7)
             aqi_now, aqi_lag1, aqi_lag3, aqi_lag6, aqi_lag24,
             city_baseline_aqi, float(h),
+            # Momentum (3)
+            momentum_1h, momentum_3h, momentum_6h,
+            # Rolling stats (6)
             mean6, std6, mean24, std24, min24, max24,
+            # Weather at t+h (6)
             ws_h, np.sin(wd_rad), np.cos(wd_rad), hum_h, temp_h, pres_h,
+            # Precipitation at t+h (1)
             prec_h,
+            # Interactions (7)
             ventilation, wind_change, is_calm, pressure_trend,
-            humidity_change, precip_washout,
-            hour_sin, hour_cos, is_weekend, is_rush,
+            humidity_change, precip_washout, temp_humidity,
+            # Temporal rich (6)
+            hour_sin, hour_cos, is_weekend,
+            is_morning_rush, is_evening_rush, is_midday,
+            # Temporal × context interactions (4)
+            rush_x_baseline, rush_x_stagnation,
+            rush_x_weekend, calm_x_night,
         ]
 
     async def generate_ml_forecast(self, city_key: str, hours: int = 72) -> Dict[str, Any]:
