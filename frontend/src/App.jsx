@@ -214,12 +214,14 @@ export default function App() {
 
   // ── Data Fetching ────────────────────────────────────────────────────
 
-  const loadState = useCallback(async (isInitial = false) => {
+  const loadState = useCallback(async (isInitial = false, forceFresh = false) => {
     if (isInitial) {
       setLoading(true)
       setProgress(0)
     }
-    const data = await fetchJSON('/api/state?city=all')
+    // Pass fresh=true to bypass backend cache when explicitly requested
+    const freshParam = (isInitial || forceFresh) ? '&fresh=true' : ''
+    const data = await fetchJSON(`/api/state?city=all${freshParam}`)
     if (data) {
       setState(data)
       if (isInitial && data.wards?.length) {

@@ -868,7 +868,8 @@ class SimulationEngine:
         self._rng = random.Random(seed)
         self._cache: Dict[str, Any] = {}
         self._cache_ts: Dict[str, float] = {}
-        self._cache_ttl = 300  # 5-minute cache
+        self._cache_ttl = 90  # 90-second cache for readings (APIs update hourly)
+        self._forecast_cache_ttl = 120  # 2-minute cache for forecasts
 
     def _calculate_plume_dispersion(
         self,
@@ -924,21 +925,37 @@ class SimulationEngine:
     def _get_city(self, city_key: str) -> Dict[str, Any]:
         return CITIES.get(city_key, CITIES[DEFAULT_CITY])
 
-    def _is_cached(self, key: str) -> bool:
-        return key in self._cache and (time.time() - self._cache_ts.get(key, 0)) < self._cache_ttl
+    def _is_cached(self, key: str, ttl: float = None) -> bool:
+        if ttl is None:
+            ttl = self._cache_ttl
+        return key in self._cache and (time.time() - self._cache_ts.get(key, 0)) < ttl
+
+    def invalidate_cache(self, prefix: str = None):
+        """Clear cached data. If prefix is given, only clear keys starting with that prefix."""
+        if prefix:
+            keys_to_remove = [k for k in self._cache if k.startswith(prefix)]
+            for k in keys_to_remove:
+                del self._cache[k]
+                self._cache_ts.pop(k, None)
+            print(f"[Cache Invalidated] Cleared {len(keys_to_remove)} entries with prefix '{prefix}'")
+        else:
+            self._cache.clear()
+            self._cache_ts.clear()
+            print("[Cache Invalidated] All cache cleared")
 
     async def generate_readings(
-        self, city_key: str = DEFAULT_CITY
+        self, city_key: str = DEFAULT_CITY, force_refresh: bool = False
     ) -> List[Dict[str, Any]]:
         """Generate AQI readings — fetches REAL data via the hybrid OpenAQ v3 / Open-Meteo pipeline."""
         cache_key = f"readings_{city_key}"
-        if self._is_cached(cache_key):
+        if not force_refresh and self._is_cached(cache_key):
             age = time.time() - self._cache_ts.get(cache_key, 0)
             remaining = max(0, int(self._cache_ttl - age))
             print(f"[Cache Hit] '{city_key}' - Serving cached data ({remaining}s remaining)")
             return self._cache[cache_key]
         else:
-            print(f"[Cache Miss] '{city_key}' - Fetching fresh live data...")
+            reason = "force_refresh=True" if force_refresh else "cache expired"
+            print(f"[Cache Miss] '{city_key}' - Fetching fresh live data ({reason})...")
 
         ts = datetime.now(timezone.utc)
         readings: List[Dict[str, Any]] = []
@@ -1112,11 +1129,11 @@ class SimulationEngine:
         return readings
 
     async def generate_forecast(
-        self, city_key: str = DEFAULT_CITY, hours: int = 24
+        self, city_key: str = DEFAULT_CITY, hours: int = 24, force_refresh: bool = False
     ) -> List[Dict[str, Any]]:
         """Generate city AQI forecast using Open-Meteo hourly forecast API."""
         cache_key = f"forecast_{city_key}_{hours}"
-        if self._is_cached(cache_key):
+        if not force_refresh and self._is_cached(cache_key, self._forecast_cache_ttl):
             return self._cache[cache_key]
 
         now = datetime.now(timezone.utc)
@@ -1352,10 +1369,10 @@ class SimulationEngine:
         self._cache_ts[cache_key] = time.time()
         return grid
 
-    async def get_city_state(self, city_key: str = DEFAULT_CITY) -> Dict[str, Any]:
+    async def get_city_state(self, city_key: str = DEFAULT_CITY, force_refresh: bool = False) -> Dict[str, Any]:
         """Return a complete snapshot of the selected city."""
         city = self._get_city(city_key)
-        readings = await self.generate_readings(city_key)
+        readings = await self.generate_readings(city_key, force_refresh=force_refresh)
 
         rng = random.Random(hash(city_key))
         population = rng.randint(250000, 1800000) if "_" in city_key else rng.randint(4000000, 15000000)

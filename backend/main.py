@@ -237,11 +237,42 @@ def get_cities():
     return {"cities": sim.get_available_cities(), "default": DEFAULT_CITY}
 
 
+@app.post("/api/cache/clear")
+async def clear_cache():
+    """Force clear all cached data so next request fetches live data."""
+    sim.invalidate_cache()
+    return {"status": "ok", "message": "All caches cleared. Next request will fetch fresh live data."}
+
+
+@app.get("/api/data-freshness")
+def get_data_freshness():
+    """Return cache status for debugging — shows age of each cached entry."""
+    import time as _time
+    now = _time.time()
+    entries = {}
+    for key in sim._cache_ts:
+        age = round(now - sim._cache_ts[key], 1)
+        ttl = sim._forecast_cache_ttl if key.startswith("forecast_") else sim._cache_ttl
+        entries[key] = {
+            "age_seconds": age,
+            "ttl_seconds": ttl,
+            "is_stale": age >= ttl,
+            "refreshes_in": max(0, round(ttl - age, 1))
+        }
+    return {
+        "cache_entries": entries,
+        "readings_ttl": sim._cache_ttl,
+        "forecast_ttl": sim._forecast_cache_ttl,
+        "total_cached": len(entries)
+    }
+
 @app.get("/api/state")
-async def get_state(city: str = Query(default="all")):
-    """Return a complete snapshot of the selected city or all cities combined with REAL AQI data."""
+async def get_state(city: str = Query(default="all"), fresh: bool = Query(default=False)):
+    """Return a complete snapshot of the selected city or all cities combined with REAL AQI data.
+    Pass fresh=true to bypass cache and fetch live data from APIs."""
+    force = fresh
     if city == "all":
-        readings = await sim.generate_readings("all")
+        readings = await sim.generate_readings("all", force_refresh=force)
         
         combined_wards = []
         combined_sensors = []
@@ -326,7 +357,7 @@ async def get_state(city: str = Query(default="all")):
             "city_averages": city_averages,
             "weather": weather
         }
-    return await sim.get_city_state(city)
+    return await sim.get_city_state(city, force_refresh=force)
 
 
 
@@ -334,10 +365,11 @@ async def get_state(city: str = Query(default="all")):
 async def get_forecast(
     city: str = Query(default=DEFAULT_CITY),
     hours: int = Query(default=24, ge=1, le=72),
+    fresh: bool = Query(default=False),
 ):
     """Return ward-level AQI forecast grid using real Open-Meteo forecast data with ML predictions."""
     # 1. Fetch raw forecast grid for all cities
-    raw_forecast = await sim.generate_forecast(city, hours)
+    raw_forecast = await sim.generate_forecast(city, hours, force_refresh=fresh)
     
     # 2. Build the list of cities to generate ML forecasts for.
     # For "all" mode, use every top-level city in LIVE_CITIES (no ward sub-localities —
