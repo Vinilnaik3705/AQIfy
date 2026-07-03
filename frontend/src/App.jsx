@@ -220,7 +220,7 @@ export default function App() {
       setProgress(0)
     }
     // Pass fresh=true to bypass backend cache when explicitly requested
-    const freshParam = (isInitial || forceFresh) ? '&fresh=true' : ''
+    const freshParam = forceFresh ? '&fresh=true' : ''
     const data = await fetchJSON(`/api/state?city=all${freshParam}`)
     if (data) {
       setState(data)
