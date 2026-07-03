@@ -316,23 +316,19 @@ async def _fetch_real_aqi_openweather(lat: float, lng: float) -> Optional[Dict[s
                     
                     pm25_raw = components.get("pm2_5", 0.0) or 0.0
                     pm10_raw = components.get("pm10", 0.0) or 0.0
-                    # OpenWeatherMap returns CO in µg/m³, but CPCB/Indian AQI calculation expects mg/m³
+                    # OpenWeather pollutant components are already provided in the units
+                    # required by CPCB AQI calculation, except CO which must be converted
+                    # from µg/m³ to mg/m³.
                     co = (components.get("co", 0.0) or 0.0) / 1000.0
-                    
-                    # Apply gas scaling factors to correct global model overestimations for ground-level AQI in India
-                    no2 = (components.get("no2", 0.0) or 0.0) * 0.5
-                    so2 = (components.get("so2", 0.0) or 0.0) * 0.2
-                    o3 = (components.get("o3", 0.0) or 0.0) * 0.35
-                    
-                    # Gentle CAMS calibration: CAMS overestimates by ~30% above 30µg/m³
-                    # Below 30µg/m³ the model is accurate, so we trust the raw value.
-                    if pm25_raw > 30.0:
-                        pm25_cal = 30.0 + (pm25_raw - 30.0) * 0.7
-                    else:
-                        pm25_cal = pm25_raw
-                    
-                    pm10_cal = min(pm10_raw, pm25_cal * 2.0)
-                    
+                    no2 = components.get("no2", 0.0) or 0.0
+                    so2 = components.get("so2", 0.0) or 0.0
+                    o3 = components.get("o3", 0.0) or 0.0
+                    pm25_cal = pm25_raw
+                    pm10_cal = pm10_raw
+
+                    if pm10_cal == 0.0 and pm25_cal > 0.0:
+                        pm10_cal = pm25_cal * 1.8
+
                     aqi_in = calculate_indian_aqi(pm25_cal, pm10_cal, no2, so2, co, o3)
                     
                     return {
@@ -950,8 +946,7 @@ class SimulationEngine:
         cache_key = f"readings_{city_key}"
         if not force_refresh and self._is_cached(cache_key):
             age = time.time() - self._cache_ts.get(cache_key, 0)
-            remaining = max(0, int(self._cache_ttl - age))
-            print(f"[Cache Hit] '{city_key}' - Serving cached data ({remaining}s remaining)")
+            print(f"[Cache Hit] '{city_key}' - Serving cached data")
             return self._cache[cache_key]
         else:
             reason = "force_refresh=True" if force_refresh else "cache expired"

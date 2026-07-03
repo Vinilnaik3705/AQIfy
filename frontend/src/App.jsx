@@ -268,6 +268,10 @@ export default function App() {
   }, [state, loading])
 
   useEffect(() => {
+    if (state) loadForecast(forecastHours)
+  }, [state, forecastHours, loadForecast])
+
+  useEffect(() => {
     loadState(true)
   }, [loadState])
 
@@ -407,6 +411,7 @@ export default function App() {
           <CommandCenter
             state={state}
             selectedWard={selectedWard}
+            forecast={forecast}
             onSelectWard={handleSelectWard}
             mapStyle={mapStyle}
             setMapStyle={setMapStyle}
@@ -1120,7 +1125,7 @@ function WindStreamAnimation() {
 
 /* ── Command Center ────────────────────────────────────────────────────── */
 
-function CommandCenter({ state, selectedWard, onSelectWard, mapStyle, setMapStyle, customPlaces, targetCenter, targetZoom, setTab, onSelectPlace, forceMaximized = false, attribution }) {
+function CommandCenter({ state, selectedWard, forecast, onSelectWard, mapStyle, setMapStyle, customPlaces, targetCenter, targetZoom, setTab, onSelectPlace, forceMaximized = false, attribution }) {
   const [query, setQuery] = useState('')
   const [results, setResults] = useState([])
   const [showDropdown, setShowDropdown] = useState(false)
@@ -1223,6 +1228,7 @@ function CommandCenter({ state, selectedWard, onSelectWard, mapStyle, setMapStyl
 
   const trendAqi = selectedWard?.aqi_in ?? selectedWard?.current_aqi ?? Math.round(state.sensors.reduce((s, r) => s + (r.aqi_in ?? r.aqi), 0) / state.sensors.length);
   const selectedCityName = selectedWard?.name ?? state.city.name;
+  const forecastWardId = selectedWard?.ward_key ?? selectedWard?.id ?? state.city_key ?? state.city?.key ?? state.city?.name;
 
   // Ranking List Generation
   const rankedCities = state.wards.map(w => {
@@ -1253,46 +1259,76 @@ function CommandCenter({ state, selectedWard, onSelectWard, mapStyle, setMapStyl
     return `rgb(${r}, ${g}, 0)`;
   };
 
-  // Simulated Hourly Forecast (72 hours projection)
-  const hourlyForecastData = Array.from({ length: 72 }).map((_, idx) => {
-    let timeLabel = '';
-    const date = new Date();
-    date.setHours(date.getHours() + idx);
-    const hour = date.getHours();
-    const isNight = hour < 6 || hour > 18;
+  const hourlyForecastData = Array.isArray(forecast) && forecast.length > 0
+    ? forecast.slice(0, 72).map((entry, idx) => {
+        const wardForecast = entry?.wards?.find(w => w.ward_id === forecastWardId) ?? entry?.wards?.[0] ?? null;
+        const dt = new Date(entry?.timestamp || Date.now() + idx * 3600000);
+        const labelHour = dt.getHours();
+        const timeLabel = idx === 0
+          ? 'Now'
+          : labelHour === 0
+            ? dt.toLocaleDateString('en-US', { weekday: 'short' })
+            : String(labelHour).padStart(2, '0') + ':00';
+        const hourlyAqi = Math.round(wardForecast?.predicted_aqi ?? trendAqi);
+        const forecastWind = Math.round(wardForecast?.wind_speed_kmh ?? windKmh);
+        const isNight = labelHour < 6 || labelHour > 18;
 
-    if (idx === 0) {
-      timeLabel = 'Now';
-    } else {
-      const hoursStr = String(hour).padStart(2, '0') + ':00';
-      if (hour === 0) {
-        timeLabel = date.toLocaleDateString('en-US', { weekday: 'short' });
-      } else {
-        timeLabel = hoursStr;
-      }
-    }
-    const multiplier = 1 + 0.12 * Math.sin(idx / 5);
-    const hourlyAqi = Math.round(trendAqi * multiplier);
+        let condition = 'sunny';
+        if (hourlyAqi > 150) {
+          condition = 'cloudy';
+        } else if (isNight) {
+          condition = idx % 2 === 0 ? 'night-cloudy' : 'clear-night';
+        } else if (hourlyAqi > 100) {
+          condition = 'cloudy';
+        }
 
-    // Simulate weather conditions that change with the timeline
-    let condition = 'sunny';
-    if (idx % 15 === 0) {
-      condition = 'rainy';
-    } else if (isNight) {
-      condition = idx % 2 === 0 ? 'night-cloudy' : 'clear-night';
-    } else if (idx % 5 === 0 || idx % 7 === 0) {
-      condition = 'cloudy';
-    }
+        return {
+          time: timeLabel,
+          aqi: hourlyAqi,
+          temp: Math.round(temp),
+          wind: forecastWind,
+          humidity: Math.round(humidity),
+          condition
+        };
+      })
+    : Array.from({ length: 72 }).map((_, idx) => {
+        let timeLabel = '';
+        const date = new Date();
+        date.setHours(date.getHours() + idx);
+        const hour = date.getHours();
+        const isNight = hour < 6 || hour > 18;
 
-    return {
-      time: timeLabel,
-      aqi: hourlyAqi,
-      temp: Math.round(temp + 3 * Math.cos(idx / 6)),
-      wind: Math.round(windKmh + Math.sin(idx / 2)),
-      humidity: Math.round(humidity + (idx % 6)),
-      condition
-    };
-  });
+        if (idx === 0) {
+          timeLabel = 'Now';
+        } else {
+          const hoursStr = String(hour).padStart(2, '0') + ':00';
+          if (hour === 0) {
+            timeLabel = date.toLocaleDateString('en-US', { weekday: 'short' });
+          } else {
+            timeLabel = hoursStr;
+          }
+        }
+        const multiplier = 1 + 0.12 * Math.sin(idx / 5);
+        const hourlyAqi = Math.round(trendAqi * multiplier);
+
+        let condition = 'sunny';
+        if (idx % 15 === 0) {
+          condition = 'rainy';
+        } else if (isNight) {
+          condition = idx % 2 === 0 ? 'night-cloudy' : 'clear-night';
+        } else if (idx % 5 === 0 || idx % 7 === 0) {
+          condition = 'cloudy';
+        }
+
+        return {
+          time: timeLabel,
+          aqi: hourlyAqi,
+          temp: Math.round(temp + 3 * Math.cos(idx / 6)),
+          wind: Math.round(windKmh + Math.sin(idx / 2)),
+          humidity: Math.round(humidity + (idx % 6)),
+          condition
+        };
+      });
 
   // Simulated 7-day forecast
   const days = ['Today', 'Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri'];

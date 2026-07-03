@@ -747,13 +747,13 @@ class AQIForecaster:
             h_idx = h_offset + 1  # hour_offset is 1-based in the output
             dt = datetime.fromisoformat(fw_times[h_offset])
 
-            predicted_aqi = float(spline_aqi[h_idx]) if h_idx < len(spline_aqi) else float(spline_aqi[-1])
+            model_predicted_aqi = float(spline_aqi[h_idx]) if h_idx < len(spline_aqi) else float(spline_aqi[-1])
             conf_lo = float(spline_lo[h_idx]) if h_idx < len(spline_lo) else float(spline_lo[-1])
             conf_hi = float(spline_hi[h_idx]) if h_idx < len(spline_hi) else float(spline_hi[-1])
 
             # Ensure ordering
-            conf_lo = min(conf_lo, predicted_aqi)
-            conf_hi = max(conf_hi, predicted_aqi)
+            conf_lo = min(conf_lo, model_predicted_aqi)
+            conf_hi = max(conf_hi, model_predicted_aqi)
 
             # Weather at this hour
             ws = (forecast_weather["wind_speed"][h_offset] or 5.0)
@@ -768,6 +768,16 @@ class AQIForecaster:
             om_o3 = forecast_raw_aqi["o3"][h_offset] or 0.0
             open_meteo_raw_aqi = min(calculate_indian_aqi(
                 om_pm25, om_pm10, om_no2, om_so2, om_co, om_o3), 500.0)
+
+            # Keep the ML output anchored to the actual atmospheric forecast.
+            # Raw Open-Meteo AQI drives the long-range trend while the model
+            # adds local continuity from historical patterns.
+            blend_weight = min(0.70, max(0.45, 0.55 + (metrics["skill_score"] * 0.05)))
+            predicted_aqi = (blend_weight * open_meteo_raw_aqi) + ((1.0 - blend_weight) * model_predicted_aqi)
+            predicted_aqi = max(0.0, min(500.0, predicted_aqi))
+
+            conf_lo = min(conf_lo, open_meteo_raw_aqi)
+            conf_hi = max(conf_hi, open_meteo_raw_aqi)
 
             # ── Mitigation simulation ──
             hour = dt.hour
