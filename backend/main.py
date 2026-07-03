@@ -111,15 +111,23 @@ async def startup_event():
     async def train_all():
         import logging
         log = logging.getLogger("main")
-        # Train one city at a time with cooldown to respect Open-Meteo rate limits
-        for idx, city in enumerate(PARENT_CITIES):
-            try:
-                await forecaster.train_for_city(city)
-            except Exception as e:
-                log.error(f"Error training startup model for {city}: {e}")
-            # 5-second cooldown between cities to avoid 429
-            if idx < len(PARENT_CITIES) - 1:
-                await asyncio.sleep(5)
+        # Train cities concurrently (bounded pool) instead of one-at-a-time with a
+        # hardcoded 5s cooldown between each. That old loop was the reason startup
+        # training crawled at 5+ seconds per city and, combined with the lock that
+        # used to span the whole fetch+train pipeline in forecaster.py, could stall
+        # unrelated requests too. forecaster.train_all_cities() already fetches AQ
+        # + weather concurrently per city, retries 429s with capped backoff, and
+        # runs the CPU-bound model fitting in a worker thread — so a handful of
+        # cities training at once is safe and no longer blocks the event loop.
+        # TRAIN_CONCURRENCY is tunable via env if you ever see 429s in practice.
+        concurrency = int(os.environ.get("TRAIN_CONCURRENCY", "6"))
+        t0 = datetime.now()
+        try:
+            await forecaster.train_all_cities(city_keys=PARENT_CITIES, concurrency=concurrency)
+        except Exception as e:
+            log.error(f"Startup training batch failed: {type(e).__name__}: {e or 'no details'}")
+        log.info(f"Startup training for {len(PARENT_CITIES)} cities finished in "
+                 f"{(datetime.now() - t0).total_seconds():.1f}s ({concurrency} concurrent).")
     asyncio.create_task(train_all())
 
     # Start the background alert loop
@@ -1051,4 +1059,3 @@ def serve_static(catchall: str):
     if os.path.exists(index_file):
         return FileResponse(index_file, headers={"Cache-Control": "no-store, no-cache, must-revalidate"})
     return {"message": "Not Found"}
-

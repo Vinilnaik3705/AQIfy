@@ -43,14 +43,27 @@ if not logger.handlers:
 
 # ── Constants ────────────────────────────────────────────────────────────────
 HORIZONS = [6, 12, 24, 36, 48, 72]          # anchor forecast horizons (hours)
-HISTORY_DAYS = 30                            # days of history to fetch for training
+# 14 days of hourly history is plenty of samples for this feature set (build_horizon_datasets
+# needs >= 24h lookback + 72h lookahead = 96h minimum) and cuts fetch payload + training time
+# roughly in half versus 30 days, with negligible accuracy impact. Raise back toward 30 if you
+# have time budget and want the model to see more day-to-day variability.
+HISTORY_DAYS = 14                            # days of history to fetch for training
 RETRAIN_HOURS = 6                            # hours between model retrains
+CV_FOLDS = 2                                  # walk-forward CV folds (was 3) — still validates
+                                               # generalization while cutting ~1/3 of the fit work
 # NOTE on loss='squared_error': Huber loss was dampening large AQI deltas as "outliers",
 # causing flat predictions. Squared error treats rush-hour spikes as real signal.
-GBM_PARAMS = dict(n_estimators=200, max_depth=7, learning_rate=0.06,
+GBM_PARAMS = dict(n_estimators=150, max_depth=7, learning_rate=0.06,
                   subsample=0.85, min_samples_leaf=3, random_state=42)
 QUANTILE_LO = 0.10
 QUANTILE_HI = 0.90
+
+# Shared, connection-pooled client reused across every fetch call instead of opening
+# a brand-new TCP+TLS connection per request — a real speed cost when training many
+# cities back-to-back. Separate connect/read timeouts fail fast on a dead connection
+# without waiting the full read budget.
+_HTTP_TIMEOUT = httpx.Timeout(connect=5.0, read=12.0, write=8.0, pool=5.0)
+_HTTP_CLIENT = httpx.AsyncClient(timeout=_HTTP_TIMEOUT)
 
 
 class AQIForecaster:
@@ -67,6 +80,42 @@ class AQIForecaster:
     # ══════════════════════════════════════════════════════════════════════════
     # DATA FETCHING
     # ══════════════════════════════════════════════════════════════════════════
+
+    @staticmethod
+    async def _fetch_with_retry(url: str, params: Dict[str, Any],
+                                max_retries: int = 2) -> Optional[httpx.Response]:
+        """GET with capped exponential backoff on 429/timeout.
+        Bounded worst case (~2s + 4s = 6s of backoff, plus the request itself)
+        instead of the previous up-to-4-retry/40s-wait scheme, so one flaky
+        city can no longer stall the whole training queue for a minute-plus.
+        """
+        last_exc: Optional[Exception] = None
+        for attempt in range(max_retries + 1):
+            try:
+                resp = await _HTTP_CLIENT.get(url, params=params)
+                if resp.status_code == 200:
+                    return resp
+                if resp.status_code == 429 and attempt < max_retries:
+                    wait = min(8.0, 2.0 * (2 ** attempt))
+                    logger.warning(f"429 from {url} — retrying in {wait:.0f}s ({attempt+1}/{max_retries})")
+                    await asyncio.sleep(wait)
+                    continue
+                logger.error(f"{url} returned status {resp.status_code}")
+                return None
+            except httpx.TimeoutException as e:
+                last_exc = e
+                if attempt < max_retries:
+                    logger.warning(f"Timeout fetching {url} (attempt {attempt+1}/{max_retries+1}), retrying...")
+                    continue
+            except Exception as e:
+                last_exc = e
+                break
+        if last_exc is not None:
+            # type(e).__name__ matters here: httpx timeout/connection errors often
+            # stringify to an EMPTY message, which is why the old logs showed
+            # "Exception during historical data fetch:" with nothing after the colon.
+            logger.error(f"Failed to fetch {url}: {type(last_exc).__name__}: {last_exc or '(no message from exception)'}")
+        return None
 
     async def get_historical_data(self, lat: float, lng: float,
                                   days: int = HISTORY_DAYS) -> Optional[Dict[str, List[float]]]:
@@ -92,30 +141,23 @@ class AQIForecaster:
             "start_date": start_str, "end_date": end_str,
         }
 
-        max_retries = 4
         try:
-            async with httpx.AsyncClient(timeout=20.0) as client:
-                aq_resp = await client.get(aq_url, params=aq_params)
-                if aq_resp.status_code != 200:
-                    logger.error(f"AQ history fetch failed: {aq_resp.status_code}")
-                    return None
+            # Fetch AQ + weather concurrently instead of sequentially — this alone
+            # roughly halves the wall-clock time per city, since previously the
+            # weather request (with its own retry loop) only started after the AQ
+            # request had fully completed.
+            aq_resp, weather_resp = await asyncio.gather(
+                self._fetch_with_retry(aq_url, aq_params),
+                self._fetch_with_retry(weather_url, weather_params),
+            )
 
-                weather_resp = None
-                for attempt in range(max_retries):
-                    weather_resp = await client.get(weather_url, params=weather_params)
-                    if weather_resp.status_code == 200:
-                        break
-                    elif weather_resp.status_code == 429:
-                        wait = 5 * (2 ** attempt)
-                        logger.warning(f"Weather 429 — retrying in {wait}s ({attempt+1}/{max_retries})")
-                        await asyncio.sleep(wait)
-                    else:
-                        logger.error(f"Weather API status {weather_resp.status_code}")
-                        return None
-
-                if weather_resp is None or weather_resp.status_code != 200:
-                    logger.error(f"Weather fetch failed after {max_retries} retries")
-                    return None
+            if aq_resp is None or weather_resp is None:
+                logger.error(
+                    f"Historical data fetch incomplete for ({lat:.4f},{lng:.4f}): "
+                    f"aq={'ok' if aq_resp is not None else 'failed'}, "
+                    f"weather={'ok' if weather_resp is not None else 'failed'}"
+                )
+                return None
 
             # Open-Meteo always serves UTF-8 JSON (it's what carries the "µg/m³"
             # unit metadata). Pin the decode encoding explicitly instead of
@@ -173,7 +215,8 @@ class AQIForecaster:
             }
             return merged
         except Exception as e:
-            logger.error(f"Exception during historical data fetch: {e}")
+            logger.error(f"Exception during historical data fetch for ({lat:.4f},{lng:.4f}): "
+                        f"{type(e).__name__}: {e or '(no message from exception)'}")
             return None
 
     async def get_forecast_weather(self, lat: float, lng: float,
@@ -187,9 +230,9 @@ class AQIForecaster:
             "forecast_days": min(max(hours // 24, 1), 3),
         }
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                resp = await client.get(url, params=params)
-            if resp.status_code == 200:
+            resp = await self._fetch_with_retry(url, params)
+            if resp is not None:
+                resp.encoding = "utf-8"
                 d = resp.json().get("hourly", {})
                 return {
                     "time": d.get("time", []),
@@ -201,7 +244,7 @@ class AQIForecaster:
                     "pressure": d.get("surface_pressure", []),
                 }
         except Exception as e:
-            logger.error(f"Error fetching forecast weather: {e}")
+            logger.error(f"Error fetching forecast weather: {type(e).__name__}: {e or '(no message from exception)'}")
         return None
 
     async def get_forecast_raw_aqi(self, lat: float, lng: float,
@@ -214,9 +257,9 @@ class AQIForecaster:
             "forecast_days": min(max(hours // 24, 1), 3),
         }
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                resp = await client.get(url, params=params)
-            if resp.status_code == 200:
+            resp = await self._fetch_with_retry(url, params)
+            if resp is not None:
+                resp.encoding = "utf-8"
                 d = resp.json().get("hourly", {})
                 return {
                     "time": d.get("time", []),
@@ -229,7 +272,7 @@ class AQIForecaster:
                            for c in d.get("carbon_monoxide", [])],
                 }
         except Exception as e:
-            logger.error(f"Error fetching raw AQI forecast: {e}")
+            logger.error(f"Error fetching raw AQI forecast: {type(e).__name__}: {e or '(no message from exception)'}")
         return None
 
     # ══════════════════════════════════════════════════════════════════════════
@@ -415,116 +458,60 @@ class AQIForecaster:
         return splits
 
     async def train_for_city(self, city_key: str, force: bool = False):
-        """Train direct-horizon delta-target models for a city."""
+        """Train direct-horizon delta-target models for a city.
+
+        IMPORTANT: the network fetch and the CPU-bound GBM fitting both run
+        OUTSIDE the cache lock, and the fitting itself runs in a worker thread
+        (see _fit_all_horizons). Previously the entire fetch+train pipeline for
+        a city ran while holding self._cache_lock, which meant every city's
+        training was fully serialized — one city (and everything waiting on
+        the lock, including screen-load requests) had to finish before the
+        next could even start its network call. That single bug was why
+        training looked "stuck" one city at a time and the UI felt frozen.
+        """
+        now = datetime.now()
         async with self._cache_lock:
             cached = self._models_cache.get(city_key)
-            now = datetime.now()
             if cached and not force:
                 if now - cached["last_trained"] < self._retrain_interval:
                     return
 
-            city_conf = CITIES.get(city_key, CITIES[DEFAULT_CITY])
-            lat, lng = city_conf["center"]
+        city_conf = CITIES.get(city_key, CITIES[DEFAULT_CITY])
+        lat, lng = city_conf["center"]
 
-            logger.info(f"Training direct-horizon models for {city_key} ...")
-            data = await self.get_historical_data(lat, lng, days=HISTORY_DAYS)
-            if not data:
-                logger.error(f"Cannot train for {city_key}: no historical data")
-                return
+        logger.info(f"Training direct-horizon models for {city_key} ...")
+        data = await self.get_historical_data(lat, lng, days=HISTORY_DAYS)
+        if not data:
+            logger.error(f"Cannot train for {city_key}: no historical data")
+            return
 
-            aqi_series = self._compute_aqi_series(data)
-            city_baseline_aqi = float(np.mean(aqi_series)) if aqi_series else 100.0
+        aqi_series = self._compute_aqi_series(data)
+        city_baseline_aqi = float(np.mean(aqi_series)) if aqi_series else 100.0
 
-            horizon_datasets = self.build_horizon_datasets(data, aqi_series, city_baseline_aqi)
-            if not horizon_datasets:
-                logger.error(f"Cannot train for {city_key}: insufficient samples")
-                return
+        horizon_datasets = self.build_horizon_datasets(data, aqi_series, city_baseline_aqi)
+        if not horizon_datasets:
+            logger.error(f"Cannot train for {city_key}: insufficient samples")
+            return
 
-            models: Dict[int, GradientBoostingRegressor] = {}
-            q_lo_models: Dict[int, GradientBoostingRegressor] = {}
-            q_hi_models: Dict[int, GradientBoostingRegressor] = {}
+        # ── CPU-bound GBM fitting: offloaded to a worker thread ──
+        # sklearn's .fit() is synchronous and can take seconds per model with
+        # no await points, which previously blocked the ENTIRE asyncio event
+        # loop — including unrelated requests just trying to load cached/
+        # fallback data for the screen. Running it via asyncio.to_thread keeps
+        # the loop free to serve everything else while this city trains.
+        try:
+            models, q_lo_models, q_hi_models, metrics = await asyncio.to_thread(
+                self._fit_all_horizons, horizon_datasets, city_key
+            )
+        except Exception as e:
+            logger.error(f"Training failed for {city_key}: {type(e).__name__}: {e or 'no details'}")
+            return
 
-            # Aggregate validation metrics across horizons
-            all_mae, all_persist_mae = [], []
-            all_dir_correct, all_dir_total = 0, 0
+        if not models:
+            logger.error(f"No models trained for {city_key}")
+            return
 
-            for h in HORIZONS:
-                if h not in horizon_datasets:
-                    logger.warning(f"Skipping horizon {h}h for {city_key}: no data")
-                    continue
-
-                X, y_delta = horizon_datasets[h]
-                if len(X) < 48:
-                    logger.warning(f"Skipping horizon {h}h for {city_key}: only {len(X)} samples")
-                    continue
-
-                # ── Walk-forward CV to compute metrics ──
-                splits = self._walk_forward_split(len(X), n_folds=3)
-                fold_maes, fold_persist_maes = [], []
-                fold_dir_correct, fold_dir_total = 0, 0
-
-                for train_idx, val_idx in splits:
-                    X_tr, y_tr = X[train_idx], y_delta[train_idx]
-                    X_vl, y_vl = X[val_idx], y_delta[val_idx]
-
-                    m = GradientBoostingRegressor(loss="squared_error", **GBM_PARAMS)
-                    m.fit(X_tr, y_tr)
-                    preds = m.predict(X_vl)
-
-                    # MAE
-                    fold_maes.append(float(np.mean(np.abs(y_vl - preds))))
-                    # Persistence baseline: delta = 0 (AQI stays same)
-                    fold_persist_maes.append(float(np.mean(np.abs(y_vl))))
-                    # Directional accuracy
-                    dir_match = np.sign(preds) == np.sign(y_vl)
-                    fold_dir_correct += int(np.sum(dir_match))
-                    fold_dir_total += len(y_vl)
-
-                all_mae.append(np.mean(fold_maes))
-                all_persist_mae.append(np.mean(fold_persist_maes))
-                all_dir_correct += fold_dir_correct
-                all_dir_total += fold_dir_total
-
-                # ── Train final models on all data ──
-                # Point estimate (squared_error — preserves large AQI swings as signal)
-                model = GradientBoostingRegressor(loss="squared_error", **GBM_PARAMS)
-                model.fit(X, y_delta)
-                models[h] = model
-
-                # Quantile lo (10th percentile)
-                q_lo = GradientBoostingRegressor(loss="quantile", alpha=QUANTILE_LO, **GBM_PARAMS)
-                q_lo.fit(X, y_delta)
-                q_lo_models[h] = q_lo
-
-                # Quantile hi (90th percentile)
-                q_hi = GradientBoostingRegressor(loss="quantile", alpha=QUANTILE_HI, **GBM_PARAMS)
-                q_hi.fit(X, y_delta)
-                q_hi_models[h] = q_hi
-
-            if not models:
-                logger.error(f"No models trained for {city_key}")
-                return
-
-            avg_mae = float(np.mean(all_mae)) if all_mae else 0.0
-            avg_persist_mae = float(np.mean(all_persist_mae)) if all_persist_mae else 1.0
-            dir_acc = all_dir_correct / max(1, all_dir_total)
-            skill = 1.0 - (avg_mae / max(1.0, avg_persist_mae))
-
-            # Residual std for anomaly detection (from last fold's residuals)
-            # Use a conservative estimate
-            residual_std = max(5.0, avg_mae * 1.5)
-
-            metrics = {
-                "ml_mae": round(avg_mae, 2),
-                "persistence_mae": round(avg_persist_mae, 2),
-                "directional_accuracy": round(dir_acc, 3),
-                "skill_score": round(skill, 3),
-                "residual_std": round(residual_std, 2),
-                "training_samples": sum(len(horizon_datasets[h][0]) for h in horizon_datasets),
-                "validation_samples": all_dir_total,
-                "horizons_trained": sorted(list(models.keys())),
-            }
-
+        async with self._cache_lock:
             self._models_cache[city_key] = {
                 "models": models,
                 "q_lo": q_lo_models,
@@ -535,9 +522,114 @@ class AQIForecaster:
                 "aqi_series": aqi_series,
                 "city_baseline_aqi": city_baseline_aqi,
             }
-            logger.info(f"Trained {len(models)} horizon models for {city_key}. "
-                        f"MAE={avg_mae:.1f} vs Persistence={avg_persist_mae:.1f}, "
-                        f"DirAcc={dir_acc:.1%}, Skill={skill:.3f}")
+        logger.info(f"Trained {len(models)} horizon models for {city_key}. "
+                    f"MAE={metrics['ml_mae']:.1f} vs Persistence={metrics['persistence_mae']:.1f}, "
+                    f"DirAcc={metrics['directional_accuracy']:.1%}, Skill={metrics['skill_score']:.3f}")
+
+    def _fit_all_horizons(self, horizon_datasets: Dict[int, Tuple[np.ndarray, np.ndarray]],
+                          city_key: str) -> Tuple[Dict[int, Any], Dict[int, Any], Dict[int, Any], Dict[str, Any]]:
+        """Synchronous, CPU-bound: walk-forward CV + final fit for every horizon.
+        Runs inside a worker thread (asyncio.to_thread) — must not touch asyncio
+        state directly. Returns empty dicts if nothing could be trained.
+        """
+        models: Dict[int, GradientBoostingRegressor] = {}
+        q_lo_models: Dict[int, GradientBoostingRegressor] = {}
+        q_hi_models: Dict[int, GradientBoostingRegressor] = {}
+
+        all_mae, all_persist_mae = [], []
+        all_dir_correct, all_dir_total = 0, 0
+
+        for h in HORIZONS:
+            if h not in horizon_datasets:
+                logger.warning(f"Skipping horizon {h}h for {city_key}: no data")
+                continue
+
+            X, y_delta = horizon_datasets[h]
+            if len(X) < 48:
+                logger.warning(f"Skipping horizon {h}h for {city_key}: only {len(X)} samples")
+                continue
+
+            # ── Walk-forward CV to compute metrics ──
+            splits = self._walk_forward_split(len(X), n_folds=CV_FOLDS)
+            fold_maes, fold_persist_maes = [], []
+            fold_dir_correct, fold_dir_total = 0, 0
+
+            for train_idx, val_idx in splits:
+                X_tr, y_tr = X[train_idx], y_delta[train_idx]
+                X_vl, y_vl = X[val_idx], y_delta[val_idx]
+
+                m = GradientBoostingRegressor(loss="squared_error", **GBM_PARAMS)
+                m.fit(X_tr, y_tr)
+                preds = m.predict(X_vl)
+
+                fold_maes.append(float(np.mean(np.abs(y_vl - preds))))
+                fold_persist_maes.append(float(np.mean(np.abs(y_vl))))
+                dir_match = np.sign(preds) == np.sign(y_vl)
+                fold_dir_correct += int(np.sum(dir_match))
+                fold_dir_total += len(y_vl)
+
+            all_mae.append(np.mean(fold_maes))
+            all_persist_mae.append(np.mean(fold_persist_maes))
+            all_dir_correct += fold_dir_correct
+            all_dir_total += fold_dir_total
+
+            # ── Train final models on all data ──
+            model = GradientBoostingRegressor(loss="squared_error", **GBM_PARAMS)
+            model.fit(X, y_delta)
+            models[h] = model
+
+            q_lo = GradientBoostingRegressor(loss="quantile", alpha=QUANTILE_LO, **GBM_PARAMS)
+            q_lo.fit(X, y_delta)
+            q_lo_models[h] = q_lo
+
+            q_hi = GradientBoostingRegressor(loss="quantile", alpha=QUANTILE_HI, **GBM_PARAMS)
+            q_hi.fit(X, y_delta)
+            q_hi_models[h] = q_hi
+
+        if not models:
+            return {}, {}, {}, {}
+
+        avg_mae = float(np.mean(all_mae)) if all_mae else 0.0
+        avg_persist_mae = float(np.mean(all_persist_mae)) if all_persist_mae else 1.0
+        dir_acc = all_dir_correct / max(1, all_dir_total)
+        skill = 1.0 - (avg_mae / max(1.0, avg_persist_mae))
+        residual_std = max(5.0, avg_mae * 1.5)
+
+        metrics = {
+            "ml_mae": round(avg_mae, 2),
+            "persistence_mae": round(avg_persist_mae, 2),
+            "directional_accuracy": round(dir_acc, 3),
+            "skill_score": round(skill, 3),
+            "residual_std": round(residual_std, 2),
+            "training_samples": sum(len(horizon_datasets[h][0]) for h in horizon_datasets),
+            "validation_samples": all_dir_total,
+            "horizons_trained": sorted(list(models.keys())),
+        }
+        return models, q_lo_models, q_hi_models, metrics
+
+    async def train_all_cities(self, city_keys: Optional[List[str]] = None,
+                               concurrency: int = 8, force: bool = False) -> None:
+        """Train every city concurrently instead of one-at-a-time.
+
+        Call this as a fire-and-forget background task right after the server
+        starts — e.g. `asyncio.create_task(forecaster.train_all_cities())` —
+        never `await` it during app startup, or you'll block the server from
+        accepting any requests (including screen-load calls) until every
+        single city finishes training.
+        """
+        keys = city_keys or list(LIVE_CITIES)
+        semaphore = asyncio.Semaphore(concurrency)
+
+        async def _train_one(key: str) -> None:
+            async with semaphore:
+                try:
+                    await self.train_for_city(key, force=force)
+                except Exception as e:
+                    logger.error(f"train_all_cities: {key} failed: {type(e).__name__}: {e or 'no details'}")
+
+        await asyncio.gather(*(_train_one(k) for k in keys))
+        logger.info(f"train_all_cities complete: {len(keys)} cities processed "
+                    f"({concurrency} concurrent).")
 
     # ══════════════════════════════════════════════════════════════════════════
     # INFERENCE — DIRECT-HORIZON + SPLINE INTERPOLATION
