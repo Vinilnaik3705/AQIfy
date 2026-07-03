@@ -9,6 +9,7 @@ Falls back to estimation only when the API is unreachable.
 from __future__ import annotations
 
 import os
+import sys
 import asyncio
 import math
 import random
@@ -17,6 +18,39 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 import httpx
+
+# ── Windows-safe console output ────────────────────────────────────────────
+# Open-Meteo / WAQI / OpenAQ responses (and CPCB unit labels like "\u00b5g/m\u00b3")
+# routinely contain non-ASCII characters. On Windows the default console/log
+# stream encoding is often cp1252 or cp437, neither of which can encode the
+# micro sign, so a bare print()/logging call raises UnicodeEncodeError. That
+# exception was propagating out of the historical-data fetch and being caught
+# by the outer except block, which is why training silently failed for cities
+# whose station/unit metadata included that character. Force UTF-8 with a
+# safe fallback so console output can never crash the fetch pipeline again.
+for _stream_name in ("stdout", "stderr"):
+    _stream = getattr(sys, _stream_name, None)
+    if _stream is not None and hasattr(_stream, "reconfigure"):
+        try:
+            _stream.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+
+
+def safe_print(*args, **kwargs) -> None:
+    """print() that can never raise UnicodeEncodeError, even on a
+    misconfigured/legacy console encoding. Falls back to ASCII with
+    escaped replacements if UTF-8 output still somehow fails."""
+    try:
+        print(*args, **kwargs)
+    except UnicodeEncodeError:
+        safe_args = [
+            a.encode("ascii", errors="backslashreplace").decode("ascii")
+            if isinstance(a, str) else a
+            for a in args
+        ]
+        print(*safe_args, **kwargs)
+
 
 HTTP_CLIENT = httpx.AsyncClient(timeout=12.0)
 
@@ -342,7 +376,7 @@ async def _fetch_real_aqi_openweather(lat: float, lng: float) -> Optional[Dict[s
                         "source": "open-weather (live)"
                     }
     except Exception as e:
-        print(f"OpenWeather fetch failed for ({lat:.4f},{lng:.4f}): {e}")
+        safe_print(f"OpenWeather fetch failed for ({lat:.4f},{lng:.4f}): {e}")
     return None
 
 
@@ -406,7 +440,7 @@ async def _fetch_real_aqi_waqi(lat: float, lng: float) -> Optional[Dict[str, Any
                         age_s = abs(current_ts - meas_time)
                         if age_s > 43200:
                             city_key = get_nearest_live_city(lat, lng)
-                            print(f"WAQI data for {city_key} is stale ({age_s}s old). Reverting to fallback.")
+                            safe_print(f"WAQI data for {city_key} is stale ({age_s}s old). Reverting to fallback.")
                             return None
 
                     city_name = aq_data.get("city", {}).get("name", "WAQI Station")
@@ -452,7 +486,7 @@ async def _fetch_real_aqi_waqi(lat: float, lng: float) -> Optional[Dict[str, Any
                         "source": "waqi-cpcb (live)",
                     }
     except Exception as e:
-        print("WAQI CPCB request failed:", e)
+        safe_print("WAQI CPCB request failed:", e)
     return None
 
 
@@ -514,13 +548,28 @@ def _us_aqi_to_pm10(aqi_val: float) -> float:
 
 
 async def _fetch_real_aqi(lat: float, lng: float) -> Optional[Dict[str, Any]]:
-    """Fetch real-time air quality. Prioritizes OpenWeatherMap, then falls back to Open-Meteo CAMS API."""
-    # 0. Attempt OpenWeatherMap
+    """Fetch real-time air quality, prioritizing an actual CPCB ground monitoring
+    station (via WAQI) over modeled/satellite estimates.
+
+    Priority order (highest fidelity first):
+      1. WAQI  — real CPCB (or co-located) ground station nearest to the coords.
+                 This is genuine measured ground-truth data, which is what the
+                 72-hour forecast must anchor to.
+      2. OpenWeatherMap Air Pollution API — modeled estimate (fallback only).
+      3. Open-Meteo CAMS Air Quality API — global model (fallback only).
+      4. OpenAQ v3 — community/government sensor network (fallback only).
+    """
+    # 0. Attempt WAQI first — this is the real CPCB ground station reading.
+    waqi_data = await _fetch_real_aqi_waqi(lat, lng)
+    if waqi_data:
+        return waqi_data
+
+    # 1. Attempt OpenWeatherMap (modeled estimate, used only if no live station nearby)
     owm_data = await _fetch_real_aqi_openweather(lat, lng)
     if owm_data:
         return owm_data
 
-    # 1. Attempt Open-Meteo CAMS Air Quality API (fallback)
+    # 2. Attempt Open-Meteo CAMS Air Quality API (fallback)
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.get(AQ_API_URL, params={
@@ -556,7 +605,7 @@ async def _fetch_real_aqi(lat: float, lng: float) -> Optional[Dict[str, Any]]:
                     "source": "open-meteo (live)",
                 }
     except Exception as e:
-        print("Open-Meteo CAMS request failed, falling back to other APIs:", e)
+        safe_print("Open-Meteo CAMS request failed, falling back to other APIs:", e)
 
     # 2. Attempt OpenAQ v3
     api_key = _get_openaq_key()
@@ -660,13 +709,9 @@ async def _fetch_real_aqi(lat: float, lng: float) -> Optional[Dict[str, Any]]:
                                     "source": f"openaq-v3 (live, station: {closest_loc.get('name')})"
                                 }
         except Exception as e:
-            print("OpenAQ v3 request failed, falling back to WAQI:", e)
+            safe_print("OpenAQ v3 request failed, falling back to WAQI:", e)
 
-    # 3. Attempt WAQI
-    waqi_data = await _fetch_real_aqi_waqi(lat, lng)
-    if waqi_data:
-        return waqi_data
-
+    # 3. All live sources exhausted — caller falls back to model-derived AQI.
     return None
 
 
@@ -933,11 +978,11 @@ class SimulationEngine:
             for k in keys_to_remove:
                 del self._cache[k]
                 self._cache_ts.pop(k, None)
-            print(f"[Cache Invalidated] Cleared {len(keys_to_remove)} entries with prefix '{prefix}'")
+            safe_print(f"[Cache Invalidated] Cleared {len(keys_to_remove)} entries with prefix '{prefix}'")
         else:
             self._cache.clear()
             self._cache_ts.clear()
-            print("[Cache Invalidated] All cache cleared")
+            safe_print("[Cache Invalidated] All cache cleared")
 
     async def generate_readings(
         self, city_key: str = DEFAULT_CITY, force_refresh: bool = False
@@ -946,11 +991,11 @@ class SimulationEngine:
         cache_key = f"readings_{city_key}"
         if not force_refresh and self._is_cached(cache_key):
             age = time.time() - self._cache_ts.get(cache_key, 0)
-            print(f"[Cache Hit] '{city_key}' - Serving cached data")
+            safe_print(f"[Cache Hit] '{city_key}' - Serving cached data")
             return self._cache[cache_key]
         else:
             reason = "force_refresh=True" if force_refresh else "cache expired"
-            print(f"[Cache Miss] '{city_key}' - Fetching fresh live data ({reason})...")
+            safe_print(f"[Cache Miss] '{city_key}' - Fetching fresh live data ({reason})...")
 
         ts = datetime.now(timezone.utc)
         readings: List[Dict[str, Any]] = []
@@ -1001,7 +1046,7 @@ class SimulationEngine:
                 results = await asyncio.gather(*(fetch_city_reading(k, idx) for idx, k in enumerate(live_keys)), return_exceptions=True)
                 for k, r_entry in zip(live_keys, results):
                     if isinstance(r_entry, Exception) or not r_entry:
-                        print(f"Error fetching live city {k}:", r_entry)
+                        safe_print(f"Error fetching live city {k}:", r_entry)
                         pollutants = {"pm25": 15.0, "pm10": 30.0, "no2": 10.0, "so2": 5.0, "co": 0.3, "o3": 20.0}
                         r_entry = {
                             "sensor_id": f"SENSOR_{k}",
@@ -1016,7 +1061,7 @@ class SimulationEngine:
                     readings.append(r_entry)
                     live_readings_map[k] = r_entry
             except Exception as e:
-                print("Error in parallel city fetch:", e)
+                safe_print("Error in parallel city fetch:", e)
 
             # Process other cities using nearest-neighbor fallback
             active_keys = list(live_readings_map.keys())
@@ -1168,14 +1213,14 @@ class SimulationEngine:
                 
                 for batch_keys, batch_result in zip(batches, results_batches):
                     if isinstance(batch_result, Exception) or not batch_result:
-                        print("Error fetching forecast batch:", batch_result)
+                        safe_print("Error fetching forecast batch:", batch_result)
                         continue
                     
                     items = batch_result if isinstance(batch_result, list) else [batch_result]
                     for k, item in zip(batch_keys, items):
                         live_forecasts[k] = item.get("hourly", {})
             except Exception as e:
-                print("Error batch fetching forecast:", e)
+                safe_print("Error batch fetching forecast:", e)
                 
             # Build combined forecast grid
             for h in range(hours):
@@ -1282,7 +1327,7 @@ class SimulationEngine:
                 if resp.status_code == 200:
                     forecast_data = resp.json().get("hourly", {})
         except Exception as e:
-            print(f"Forecast API failed for {city_key}: {e}")
+            safe_print(f"Forecast API failed for {city_key}: {e}")
         
         # Base readings to get baseline background pollutants
         readings = await self.generate_readings(city_key)
@@ -1418,4 +1463,3 @@ class SimulationEngine:
             {"key": k, "name": v["name"], "state": v.get("state", v.get("country", ""))}
             for k, v in CITIES.items()
         ]
-

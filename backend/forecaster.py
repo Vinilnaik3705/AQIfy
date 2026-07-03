@@ -1,3 +1,4 @@
+import sys
 import numpy as np
 import httpx
 import logging
@@ -8,7 +9,37 @@ from sklearn.ensemble import GradientBoostingRegressor
 from scipy.interpolate import PchipInterpolator
 from simulation import CITIES, DEFAULT_CITY, LIVE_CITIES, calculate_indian_aqi, _us_aqi_to_pm25, _us_aqi_to_pm10
 
+# ── Windows-safe logging ──────────────────────────────────────────────────────
+# Open-Meteo's historical AQ payloads carry unit metadata with non-ASCII
+# characters (e.g. "µg/m³"). On a default Windows console (cp1252/cp437),
+# logger.error()/logger.info() writing that text raised UnicodeEncodeError,
+# which then propagated out of the try block in get_historical_data() and was
+# reported as "Exception during historical data fetch: [UnicodeEncodeError]" —
+# silently killing training for every city whose payload included that
+# character. Force the stream itself to UTF-8 with a safe fallback so no log
+# call can ever throw again, regardless of the host OS/console codepage.
+for _stream_name in ("stdout", "stderr"):
+    _stream = getattr(sys, _stream_name, None)
+    if _stream is not None and hasattr(_stream, "reconfigure"):
+        try:
+            _stream.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+
 logger = logging.getLogger("AQIForecaster")
+if not logger.handlers:
+    _handler = logging.StreamHandler(stream=sys.stdout)
+    _handler.setFormatter(logging.Formatter("%(asctime)s [%(name)s] %(levelname)s: %(message)s"))
+    # errors="replace" guarantees this handler can never raise UnicodeEncodeError,
+    # even if something upstream re-wraps stdout without the reconfigure above.
+    if hasattr(_handler.stream, "reconfigure"):
+        try:
+            _handler.stream.reconfigure(errors="replace")
+        except Exception:
+            pass
+    logger.addHandler(_handler)
+    logger.setLevel(logging.INFO)
+    logger.propagate = False
 
 # ── Constants ────────────────────────────────────────────────────────────────
 HORIZONS = [6, 12, 24, 36, 48, 72]          # anchor forecast horizons (hours)
@@ -86,6 +117,11 @@ class AQIForecaster:
                     logger.error(f"Weather fetch failed after {max_retries} retries")
                     return None
 
+            # Open-Meteo always serves UTF-8 JSON (it's what carries the "µg/m³"
+            # unit metadata). Pin the decode encoding explicitly instead of
+            # relying on httpx's auto-detection, which is unnecessary risk here.
+            aq_resp.encoding = "utf-8"
+            weather_resp.encoding = "utf-8"
             aq_data = aq_resp.json().get("hourly", {})
             weather_data = weather_resp.json().get("hourly", {})
 
