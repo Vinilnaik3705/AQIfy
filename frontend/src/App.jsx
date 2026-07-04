@@ -768,6 +768,7 @@ function MapLayersControl() {
           transparent={true}
           attribution="NASA GIBS / FIRMS"
           noWrap={true}
+          time={new Date(Date.now() - 86400000).toISOString().split('T')[0]}
         />
       </LayersControl.Overlay>
     </LayersControl>
@@ -1437,6 +1438,7 @@ function CommandCenter({ state, selectedWard, forecast, onSelectWard, mapStyle, 
                   transparent={true}
                   attribution="NASA GIBS / FIRMS"
                   noWrap={true}
+                  time={new Date(Date.now() - 86400000).toISOString().split('T')[0]}
                 />
               )}
 
