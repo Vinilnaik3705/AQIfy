@@ -384,7 +384,23 @@ async def _fetch_real_aqi_openweather(lat: float, lng: float) -> Optional[Dict[s
 
 def _get_waqi_token() -> Optional[str]:
     """Retrieve the WAQI API token from the environment variables or the local .env file.
-    Falls back to the public 'demo' token if none is configured."""
+
+    Returns None if no real token is configured — deliberately NOT falling back
+    to WAQI's public "demo" token. That token isn't a real per-coordinate
+    lookup credential: WAQI restricts it to a small fixed set of sample
+    stations, so every city query against it converges on the same (or
+    near-same) canned reading regardless of the lat/lng you actually asked
+    for. That's what was producing a map where almost every Indian city
+    showed ~89 AQI — every request was silently hitting the demo response,
+    not a real ground station. Returning None here means _fetch_real_aqi_waqi
+    is skipped entirely and _fetch_real_aqi cleanly falls through to its next,
+    genuinely per-location source (OpenWeatherMap, since OPENWEATHER_API_KEY
+    is configured) instead of masking bad data as if it were live.
+
+    To get real CPCB ground-station data (more accurate than any modeled
+    fallback), sign up for a free personal token at https://aqicn.org/data-platform/token/
+    and set it as WAQI_TOKEN.
+    """
     token = os.environ.get("WAQI_TOKEN")
     if token:
         return token
@@ -397,7 +413,7 @@ def _get_waqi_token() -> Optional[str]:
                         return line.strip().split("=", 1)[1].strip()
     except Exception:
         pass
-    return "demo"
+    return None
 
 
 def _usepa_aqi_to_concentration(aqi: float, bps: list) -> float:
