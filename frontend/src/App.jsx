@@ -232,6 +232,11 @@ export default function App() {
     }
   }, [])
 
+  const loadForecast = useCallback(async (hrs) => {
+    const data = await fetchJSON(`/api/forecast?city=all&hours=${hrs}`)
+    if (data) setForecast(data)
+  }, [])
+
   // Simulated progress bar effect
   useEffect(() => {
     if (!loading) return
@@ -280,11 +285,6 @@ export default function App() {
     const iv = setInterval(() => loadState(false), 30000)
     return () => clearInterval(iv)
   }, [loadState])
-
-  const loadForecast = useCallback(async (hrs) => {
-    const data = await fetchJSON(`/api/forecast?city=all&hours=${hrs}`)
-    if (data) setForecast(data)
-  }, [])
 
   useEffect(() => {
     if (tab === 'forecast') loadForecast(forecastHours)
