@@ -1012,7 +1012,11 @@ class AQIForecaster:
         # If we have no model yet, immediately return the real meteorological forecast as fallback
         if not model_info:
             if forecast_weather and forecast_raw_aqi:
-                return self._generate_real_fallback(city_key, hours, forecast_weather, forecast_raw_aqi)
+                # Fetch current real AQI to smooth the transition for fallback
+                from simulation import _fetch_real_aqi
+                real_aqi_data = await _fetch_real_aqi(lat, lng)
+                current_aqi = real_aqi_data["aqi"] if real_aqi_data else 50.0
+                return self._generate_real_fallback(city_key, hours, forecast_weather, forecast_raw_aqi, current_aqi)
             return self._generate_fallback(city_key, hours)
 
         if not forecast_weather or not forecast_raw_aqi:
@@ -1148,7 +1152,8 @@ class AQIForecaster:
             # Raw Open-Meteo AQI drives the long-range trend while the model
             # adds local continuity from historical patterns.
             blend_weight = min(0.70, max(0.45, 0.55 + (metrics["skill_score"] * 0.05)))
-            predicted_aqi = (blend_weight * open_meteo_raw_aqi) + ((1.0 - blend_weight) * model_predicted_aqi)
+            weight_raw = blend_weight * min(1.0, h_idx / 24.0)
+            predicted_aqi = (weight_raw * open_meteo_raw_aqi) + ((1.0 - weight_raw) * model_predicted_aqi)
             predicted_aqi = max(0.0, min(500.0, predicted_aqi))
 
             conf_lo = min(conf_lo, open_meteo_raw_aqi)
@@ -1195,7 +1200,7 @@ class AQIForecaster:
     # FALLBACK & ANOMALY
     # ══════════════════════════════════════════════════════════════════════════
 
-    def _generate_real_fallback(self, city_key: str, hours: int, forecast_weather: Dict[str, Any], forecast_raw_aqi: Dict[str, Any]) -> Dict[str, Any]:
+    def _generate_real_fallback(self, city_key: str, hours: int, forecast_weather: Dict[str, Any], forecast_raw_aqi: Dict[str, Any], current_aqi: float) -> Dict[str, Any]:
         """Generate a realistic fallback forecast directly using Open-Meteo raw predictions (under 5ms)."""
         grid = []
         limit = min(hours, len(forecast_weather.get("time", [])))
@@ -1218,13 +1223,17 @@ class AQIForecaster:
             raw_aqi = calculate_indian_aqi(om_cal["pm25"], om_cal["pm10"], om_cal["no2"],
                                             om_cal["so2"], om_cal["co"], om_cal["o3"])
 
+            # Smooth transition from current_aqi to raw_aqi over the first 24 hours
+            weight_raw = min(1.0, (h + 1) / 24.0)
+            smoothed_aqi = (weight_raw * raw_aqi) + ((1.0 - weight_raw) * current_aqi)
+
             grid.append({
                 "timestamp": dt.isoformat(),
                 "hour_offset": h + 1,
-                "predicted_aqi": round(raw_aqi, 1),
-                "mitigated_aqi": round(raw_aqi * 0.85, 1),
-                "confidence_low": round(max(0.0, raw_aqi - 10.0), 1),
-                "confidence_high": round(raw_aqi + 10.0, 1),
+                "predicted_aqi": round(smoothed_aqi, 1),
+                "mitigated_aqi": round(smoothed_aqi * 0.85, 1),
+                "confidence_low": round(max(0.0, smoothed_aqi - 10.0), 1),
+                "confidence_high": round(smoothed_aqi + 10.0, 1),
                 "open_meteo_raw": round(raw_aqi, 1),
                 "persistence_baseline": round(base_aqi, 1),
                 "confidence": 0.85,
