@@ -10,6 +10,7 @@ from typing import Dict, List, Any, Tuple, Optional
 from sklearn.ensemble import GradientBoostingRegressor
 from scipy.interpolate import PchipInterpolator
 from simulation import (CITIES, DEFAULT_CITY, LIVE_CITIES, calculate_indian_aqi,
+                        calibrate_india_pollutants,
                         _us_aqi_to_pm25, _us_aqi_to_pm10, _get_openweather_key,
                         _get_weatherapi_key)
 
@@ -398,46 +399,53 @@ class AQIForecaster:
             if not times:
                 return None
 
-            # Use raw PM concentrations from CAMS with urban calibration applied.
-            # CAMS global model under-represents ground-level urban pollution.
-            # Apply the same calibration corrections used for current readings
-            # (from simulation.py) so the training data reflects realistic
-            # ground-station-level AQI dynamics rather than smoothed global model.
-            # This calibration is specific to CAMS (Open-Meteo's model) — the
-            # OpenWeather fallback path already reports ground-calibrated values,
-            # so it's passed through unscaled.
+            # Use raw PM concentrations from CAMS with the SAME India calibration
+            # (calibrate_india_pollutants) applied to current readings and forecast
+            # horizons. This used to be a fourth, independently hand-tuned copy of
+            # the calibration (0.7 damping / 2.5x PM10 cap, vs. 0.85 / 3.5x
+            # elsewhere) — meaning the model was trained on data calibrated one way
+            # while being anchored/blended against data calibrated another way at
+            # inference time. Keeping all four call sites on one function is what
+            # prevents that drift from creeping back in.
+            # OpenWeather's history fallback already reports ground-calibrated
+            # values, so it's passed through unscaled (is_cams gate below).
             is_cams = aq_source == "open-meteo"
             raw_pm25 = aq_data.get("pm2_5", [])
             raw_pm10 = aq_data.get("pm10", [])
-            pm25_list, pm10_list = [], []
+            raw_no2 = aq_data.get("nitrogen_dioxide", [])
+            raw_so2 = aq_data.get("sulphur_dioxide", [])
+            raw_o3 = aq_data.get("ozone", [])
+            raw_co = aq_data.get("carbon_monoxide", [])
+
+            pm25_list, pm10_list, no2_list, so2_list, o3_list, co_list = [], [], [], [], [], []
             for idx in range(len(times)):
                 pm25_raw = raw_pm25[idx] if idx < len(raw_pm25) and raw_pm25[idx] is not None else 0.0
                 pm10_raw = raw_pm10[idx] if idx < len(raw_pm10) and raw_pm10[idx] is not None else 0.0
-                # CAMS calibration: CAMS overestimates at low levels, underestimates at
-                # high levels in urban areas. Apply gentle scaling that preserves diurnal
-                # variation while anchoring to realistic ground-level values.
-                # Above 30 µg/m³, CAMS PM2.5 is ~30% too high relative to stations;
-                # below, it's reasonably accurate.
-                if is_cams and pm25_raw > 30.0:
-                    pm25_cal = 30.0 + (pm25_raw - 30.0) * 0.7
+                no2_raw = raw_no2[idx] if idx < len(raw_no2) and raw_no2[idx] is not None else 0.0
+                so2_raw = raw_so2[idx] if idx < len(raw_so2) and raw_so2[idx] is not None else 0.0
+                o3_raw = raw_o3[idx] if idx < len(raw_o3) and raw_o3[idx] is not None else 0.0
+                co_raw = raw_co[idx] if idx < len(raw_co) and raw_co[idx] is not None else 0.0
+
+                if is_cams:
+                    cal = calibrate_india_pollutants(pm25_raw, pm10_raw, no2_raw, so2_raw, co_raw, o3_raw)
+                    pm25_list.append(cal["pm25"]); pm10_list.append(cal["pm10"])
+                    no2_list.append(cal["no2"]); so2_list.append(cal["so2"])
+                    o3_list.append(cal["o3"]); co_list.append(cal["co"])
                 else:
-                    pm25_cal = pm25_raw
-                pm10_cal = min(pm10_raw, pm25_cal * 2.5) if is_cams else pm10_raw
-                pm25_list.append(pm25_cal)
-                pm10_list.append(pm10_cal)
+                    pm25_list.append(pm25_raw); pm10_list.append(pm10_raw)
+                    no2_list.append(no2_raw); so2_list.append(so2_raw)
+                    o3_list.append(o3_raw); co_list.append(co_raw / 1000.0)
 
             safe = lambda lst, default=0.0: [v if v is not None else default for v in lst]
-            gas_scale = lambda v, factor: max(0.0, (v if v is not None else 0.0) * (factor if is_cams else 1.0))
 
             merged = {
                 "time": times,
                 "pm2_5": pm25_list,
                 "pm10": pm10_list,
-                "no2": [gas_scale(v, 0.5) for v in aq_data.get("nitrogen_dioxide", [])],
-                "so2": [gas_scale(v, 0.2) for v in aq_data.get("sulphur_dioxide", [])],
-                "o3": [gas_scale(v, 0.35) for v in aq_data.get("ozone", [])],
-                "co": [co / 1000.0 if co is not None else 0.0
-                       for co in aq_data.get("carbon_monoxide", [])],
+                "no2": no2_list,
+                "so2": so2_list,
+                "o3": o3_list,
+                "co": co_list,
                 "temp": safe(weather_data.get("temperature_2m", []), 25.0),
                 "humidity": safe(weather_data.get("relative_humidity_2m", []), 50.0),
                 "wind_speed": safe(weather_data.get("wind_speed_10m", []), 5.0),
@@ -1120,15 +1128,21 @@ class AQIForecaster:
             ws = (forecast_weather["wind_speed"][h_offset] or 5.0)
             wd = (forecast_weather["wind_dir"][h_offset] or 180.0)
 
-            # Open-Meteo raw AQI
-            om_pm25 = forecast_raw_aqi["pm2_5"][h_offset] or 0.0
-            om_pm10 = forecast_raw_aqi["pm10"][h_offset] or 0.0
-            om_no2 = forecast_raw_aqi["no2"][h_offset] or 0.0
-            om_so2 = forecast_raw_aqi["so2"][h_offset] or 0.0
-            om_co = forecast_raw_aqi["co"][h_offset] or 0.0
-            om_o3 = forecast_raw_aqi["o3"][h_offset] or 0.0
+            # Open-Meteo raw AQI — MUST use the same India calibration as the "now"
+            # anchor (calibrate_india_pollutants), or "now" and "+1h" are on two
+            # different scales and the blend below produces an artificial jump/
+            # runaway climb as horizon-weight shifts toward this raw term.
+            om_cal = calibrate_india_pollutants(
+                forecast_raw_aqi["pm2_5"][h_offset] or 0.0,
+                forecast_raw_aqi["pm10"][h_offset] or 0.0,
+                forecast_raw_aqi["no2"][h_offset] or 0.0,
+                forecast_raw_aqi["so2"][h_offset] or 0.0,
+                forecast_raw_aqi["co"][h_offset] or 0.0,
+                forecast_raw_aqi["o3"][h_offset] or 0.0,
+            )
             open_meteo_raw_aqi = min(calculate_indian_aqi(
-                om_pm25, om_pm10, om_no2, om_so2, om_co, om_o3), 500.0)
+                om_cal["pm25"], om_cal["pm10"], om_cal["no2"],
+                om_cal["so2"], om_cal["co"], om_cal["o3"]), 500.0)
 
             # Keep the ML output anchored to the actual atmospheric forecast.
             # Raw Open-Meteo AQI drives the long-range trend while the model
@@ -1188,18 +1202,21 @@ class AQIForecaster:
         # Use first hour as persistence baseline
         base_pm25 = forecast_raw_aqi["pm2_5"][0] if forecast_raw_aqi["pm2_5"] else 15.0
         base_pm10 = forecast_raw_aqi["pm10"][0] if forecast_raw_aqi["pm10"] else 30.0
-        base_aqi = calculate_indian_aqi(base_pm25, base_pm10, 0.0, 0.0, 0.0, 0.0)
+        base_cal = calibrate_india_pollutants(base_pm25, base_pm10, 0.0, 0.0, 0.0, 0.0)
+        base_aqi = calculate_indian_aqi(base_cal["pm25"], base_cal["pm10"], 0.0, 0.0, 0.0, 0.0)
 
         for h in range(limit):
             dt = datetime.fromisoformat(forecast_weather["time"][h])
-            om_pm25 = forecast_raw_aqi["pm2_5"][h] if h < len(forecast_raw_aqi["pm2_5"]) else 15.0
-            om_pm10 = forecast_raw_aqi["pm10"][h] if h < len(forecast_raw_aqi["pm10"]) else 30.0
-            om_no2 = forecast_raw_aqi["no2"][h] if h < len(forecast_raw_aqi["no2"]) else 0.0
-            om_so2 = forecast_raw_aqi["so2"][h] if h < len(forecast_raw_aqi["so2"]) else 0.0
-            om_co = forecast_raw_aqi["co"][h] if h < len(forecast_raw_aqi["co"]) else 0.0
-            om_o3 = forecast_raw_aqi["o3"][h] if h < len(forecast_raw_aqi["o3"]) else 0.0
-
-            raw_aqi = calculate_indian_aqi(om_pm25, om_pm10, om_no2, om_so2, om_co, om_o3)
+            om_cal = calibrate_india_pollutants(
+                forecast_raw_aqi["pm2_5"][h] if h < len(forecast_raw_aqi["pm2_5"]) else 15.0,
+                forecast_raw_aqi["pm10"][h] if h < len(forecast_raw_aqi["pm10"]) else 30.0,
+                forecast_raw_aqi["no2"][h] if h < len(forecast_raw_aqi["no2"]) else 0.0,
+                forecast_raw_aqi["so2"][h] if h < len(forecast_raw_aqi["so2"]) else 0.0,
+                forecast_raw_aqi["co"][h] if h < len(forecast_raw_aqi["co"]) else 0.0,
+                forecast_raw_aqi["o3"][h] if h < len(forecast_raw_aqi["o3"]) else 0.0,
+            )
+            raw_aqi = calculate_indian_aqi(om_cal["pm25"], om_cal["pm10"], om_cal["no2"],
+                                            om_cal["so2"], om_cal["co"], om_cal["o3"])
 
             grid.append({
                 "timestamp": dt.isoformat(),

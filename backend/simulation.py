@@ -172,6 +172,41 @@ def _calculate_sub_index(val: float, breakpoints: List[tuple]) -> float:
         return breakpoints[-1][3]
     return 0.0
 
+def calibrate_india_pollutants(pm25_raw: float, pm10_raw: float, no2_raw: float,
+                                so2_raw: float, co_raw: float, o3_raw: float,
+                                co_already_mg: bool = False) -> Dict[str, float]:
+    """Single source of truth for converting raw Open-Meteo CAMS model output into
+    India-calibrated pollutant concentrations before they go into calculate_indian_aqi().
+
+    This MUST be called identically everywhere a raw Open-Meteo reading is turned into
+    an AQI (current readings, "all cities" batch fetch, and forecast horizons). Previously
+    this logic was hand-duplicated in three places in this file and was MISSING entirely
+    from forecaster.py's forecast blend -- meaning "now" was calibrated but "+1h onward"
+    was not, which produced an artificial jump/runaway climb in every forecast curve.
+
+    PM10 cap: north Indian cities (Delhi, Jaipur, Lucknow, Amritsar, etc.) are dust-heavy
+    and legitimately run PM10/PM2.5 ratios of 2.5-3.5x. The old cap of 2.0x was silently
+    discarding real PM10 signal specifically in the region where PM10 is the dominant
+    AQI-driving pollutant, which is why northern cities under-reported vs. real ground
+    stations while southern/coastal cities (lower PM10:PM2.5 ratio) looked fine. Raised to
+    3.5x so genuine dust events aren't clipped away.
+    """
+    no2 = (no2_raw or 0.0) * 0.5
+    so2 = (so2_raw or 0.0) * 0.2
+    o3 = (o3_raw or 0.0) * 0.35
+    co = (co_raw or 0.0) if co_already_mg else (co_raw or 0.0) / 1000.0
+
+    pm25_raw = pm25_raw or 0.0
+    pm10_raw = pm10_raw or 0.0
+    if pm25_raw > 30.0:
+        pm25_cal = 30.0 + (pm25_raw - 30.0) * 0.85
+    else:
+        pm25_cal = pm25_raw
+    pm10_cal = min(pm10_raw, pm25_cal * 3.5)
+
+    return {"pm25": pm25_cal, "pm10": pm10_cal, "no2": no2, "so2": so2, "co": co, "o3": o3}
+
+
 def calculate_indian_aqi(pm25: float, pm10: float, no2: float, so2: float, co: float, o3: float) -> float:
     """Calculate the Indian National Air Quality Index (NAQI) using official CPCB breakpoints.
 
@@ -614,29 +649,20 @@ async def _fetch_real_aqi(lat: float, lng: float) -> Optional[Dict[str, Any]]:
             })
             if resp.status_code == 200:
                 data = resp.json().get("current", {})
-                pm25_raw = data.get("pm2_5", 0)
-                pm10_raw = data.get("pm10", 0)
-                # Apply gas scaling factors to correct global model overestimations for ground-level AQI in India
-                no2_raw = data.get("nitrogen_dioxide", 0) * 0.5
-                so2_raw = data.get("sulphur_dioxide", 0) * 0.2
-                co_raw = data.get("carbon_monoxide", 0) / 1000.0  # µg/m³ → mg/m³
-                o3_raw = data.get("ozone", 0) * 0.35
-
-                if pm25_raw > 30.0:
-                    pm25_cal = 30.0 + (pm25_raw - 30.0) * 0.7
-                else:
-                    pm25_cal = pm25_raw
-                pm10_cal = min(pm10_raw, pm25_cal * 2.0)
-
-                aqi_val = calculate_indian_aqi(pm25_cal, pm10_cal, no2_raw, so2_raw, co_raw, o3_raw)
+                cal = calibrate_india_pollutants(
+                    data.get("pm2_5", 0), data.get("pm10", 0),
+                    data.get("nitrogen_dioxide", 0), data.get("sulphur_dioxide", 0),
+                    data.get("carbon_monoxide", 0), data.get("ozone", 0),
+                )
+                aqi_val = calculate_indian_aqi(cal["pm25"], cal["pm10"], cal["no2"], cal["so2"], cal["co"], cal["o3"])
                 return {
                     "aqi": round(aqi_val, 1),
-                    "pm25": round(pm25_cal, 1),
-                    "pm10": round(pm10_cal, 1),
-                    "no2": round(no2_raw, 1),
-                    "so2": round(so2_raw, 1),
-                    "co": round(co_raw, 2),
-                    "o3": round(o3_raw, 1),
+                    "pm25": round(cal["pm25"], 1),
+                    "pm10": round(cal["pm10"], 1),
+                    "no2": round(cal["no2"], 1),
+                    "so2": round(cal["so2"], 1),
+                    "co": round(cal["co"], 2),
+                    "o3": round(cal["o3"], 1),
                     "source": "open-meteo (live)",
                 }
     except Exception as e:
@@ -1276,21 +1302,12 @@ class SimulationEngine:
                     co_arr = f_data.get("carbon_monoxide", [])
                     
                     if h < len(times):
-                        pm25 = pm25_arr[h] or 0.0
-                        pm10 = pm10_arr[h] or 0.0
-                        # Apply gas scaling factors to correct global model overestimations for ground-level AQI in India
-                        no2 = (no2_arr[h] or 0.0) * 0.5
-                        so2 = (so2_arr[h] or 0.0) * 0.2
-                        o3 = (o3_arr[h] or 0.0) * 0.35
-                        co = (co_arr[h] or 0.0) / 1000.0
-
-                        if pm25 > 30.0:
-                            pm25_cal = 30.0 + (pm25 - 30.0) * 0.7
-                        else:
-                            pm25_cal = pm25
-                        pm10_cal = min(pm10, pm25_cal * 2.0)
-
-                        aqi_in = calculate_indian_aqi(pm25_cal, pm10_cal, no2, so2, co, o3)
+                        cal = calibrate_india_pollutants(
+                            pm25_arr[h] or 0.0, pm10_arr[h] or 0.0,
+                            no2_arr[h] or 0.0, so2_arr[h] or 0.0,
+                            co_arr[h] or 0.0, o3_arr[h] or 0.0,
+                        )
+                        aqi_in = calculate_indian_aqi(cal["pm25"], cal["pm10"], cal["no2"], cal["so2"], cal["co"], cal["o3"])
                     else:
                         aqi_in = 50.0
                         
@@ -1379,21 +1396,12 @@ class SimulationEngine:
             co_arr = forecast_data.get("carbon_monoxide", [])
 
             for h in range(min(hours, len(times))):
-                pm25 = pm25_arr[h] or 0.0
-                pm10 = pm10_arr[h] or 0.0
-                # Apply gas scaling factors to correct global model overestimations for ground-level AQI in India
-                no2 = (no2_arr[h] or 0.0) * 0.5
-                so2 = (so2_arr[h] or 0.0) * 0.2
-                o3 = (o3_arr[h] or 0.0) * 0.35
-                co = (co_arr[h] or 0.0) / 1000.0
-
-                if pm25 > 30.0:
-                    pm25_cal = 30.0 + (pm25 - 30.0) * 0.7
-                else:
-                    pm25_cal = pm25
-                pm10_cal = min(pm10, pm25_cal * 2.0)
-
-                aqi_in = calculate_indian_aqi(pm25_cal, pm10_cal, no2, so2, co, o3)
+                cal = calibrate_india_pollutants(
+                    pm25_arr[h] or 0.0, pm10_arr[h] or 0.0,
+                    no2_arr[h] or 0.0, so2_arr[h] or 0.0,
+                    co_arr[h] or 0.0, o3_arr[h] or 0.0,
+                )
+                aqi_in = calculate_indian_aqi(cal["pm25"], cal["pm10"], cal["no2"], cal["so2"], cal["co"], cal["o3"])
 
                 rng_wind = random.Random(hash(f"{city_key}_fc_{h}"))
                 ws = rng_wind.uniform(1.5, 6.0)
