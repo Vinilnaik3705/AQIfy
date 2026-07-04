@@ -319,6 +319,35 @@ class PredictiveAgent:
         return sim_engine.generate_forecast(hours)
 
 
+def _pm25_sub_index(pm25: float) -> float:
+    pm25_bp = [
+        (0, 30, 0, 50),
+        (31, 60, 51, 100),
+        (61, 90, 101, 200),
+        (91, 120, 201, 300),
+        (121, 250, 301, 400),
+        (250, 500, 401, 500),
+    ]
+    for (b_low, b_high, i_low, i_high) in pm25_bp:
+        if b_low <= pm25 <= b_high:
+            return i_low + (pm25 - b_low) * (i_high - i_low) / (b_high - b_low)
+    return 500.0
+
+def _pm10_sub_index(pm10: float) -> float:
+    pm10_bp = [
+        (0, 50, 0, 50),
+        (51, 100, 51, 100),
+        (101, 250, 101, 200),
+        (251, 350, 201, 300),
+        (351, 430, 301, 400),
+        (430, 600, 401, 500),
+    ]
+    for (b_low, b_high, i_low, i_high) in pm10_bp:
+        if b_low <= pm10 <= b_high:
+            return i_low + (pm10 - b_low) * (i_high - i_low) / (b_high - b_low)
+    return 500.0
+
+
 # ── Enforcement Intelligence Agent ───────────────────────────────────────────
 
 class EnforcementAgent:
@@ -388,7 +417,9 @@ class EnforcementAgent:
             so2  = pollutants.get("so2", 0)
             co   = pollutants.get("co", 0)
 
-            dominant_pollutant = "PM2.5" if pm25 >= pm10 else "PM10"
+            pm25_sub = _pm25_sub_index(pm25)
+            pm10_sub = _pm10_sub_index(pm10)
+            dominant_pollutant = "PM2.5" if pm25_sub >= pm10_sub else "PM10"
             pollutant_exceedances: List[str] = []
             if pm25 > 60:
                 pollutant_exceedances.append(f"PM2.5 {pm25:.1f} µg/m³ (safe: 60)")

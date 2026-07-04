@@ -464,6 +464,15 @@ def _usepa_aqi_to_concentration(aqi: float, bps: list) -> float:
     return 0.0
 
 
+def _calculate_distance(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
+    R = 6371.0
+    dlat = math.radians(lat2 - lat1)
+    dlng = math.radians(lng2 - lng1)
+    a = math.sin(dlat / 2)**2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlng / 2)**2
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+    return R * c
+
+
 async def _fetch_real_aqi_waqi(lat: float, lng: float) -> Optional[Dict[str, Any]]:
     """Fetch real-time air quality from WAQI API using geo-based endpoint.
     
@@ -492,6 +501,16 @@ async def _fetch_real_aqi_waqi(lat: float, lng: float) -> Optional[Dict[str, Any
                         if age_s > 43200:
                             city_key = get_nearest_live_city(lat, lng)
                             safe_print(f"WAQI data for {city_key} is stale ({age_s}s old). Reverting to fallback.")
+                            return None
+
+                    # Reject if the nearest returned station is too far (> 50 km)
+                    station_geo = aq_data.get("city", {}).get("geo")
+                    if station_geo and len(station_geo) >= 2:
+                        s_lat, s_lng = float(station_geo[0]), float(station_geo[1])
+                        dist_km = _calculate_distance(lat, lng, s_lat, s_lng)
+                        if dist_km > 50.0:
+                            city_key = get_nearest_live_city(lat, lng)
+                            safe_print(f"WAQI nearest station for {city_key} is too far ({dist_km:.1f}km away). Reverting to fallback.")
                             return None
 
                     city_name = aq_data.get("city", {}).get("name", "WAQI Station")
