@@ -199,10 +199,10 @@ def calibrate_india_pollutants(pm25_raw: float, pm10_raw: float, no2_raw: float,
     pm25_raw = pm25_raw or 0.0
     pm10_raw = pm10_raw or 0.0
     if pm25_raw > 30.0:
-        pm25_cal = 30.0 + (pm25_raw - 30.0) * 0.85
+        pm25_cal = 30.0 + (pm25_raw - 30.0) * 0.70
     else:
         pm25_cal = pm25_raw
-    pm10_cal = min(pm10_raw, pm25_cal * 3.5)
+    pm10_cal = min(pm10_raw, pm25_cal * 2.5)
 
     return {"pm25": pm25_cal, "pm10": pm10_cal, "no2": no2, "so2": so2, "co": co, "o3": o3}
 

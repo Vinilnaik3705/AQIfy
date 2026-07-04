@@ -526,10 +526,12 @@ function HeaderSearch({ onSelectPlace, wards = [], onSelectWard }) {
       setResults([])
       return
     }
-    const filtered = (wards || []).filter(w =>
-      w.name.toLowerCase().includes(val.toLowerCase()) ||
-      (w.state && w.state.toLowerCase().includes(val.toLowerCase()))
-    )
+    const filtered = (wards || []).filter(w => {
+      const isParentCity = w.id && !w.id.includes('_');
+      if (!isParentCity) return false;
+      return w.name.toLowerCase().includes(val.toLowerCase()) ||
+        (w.state && w.state.toLowerCase().includes(val.toLowerCase()));
+    })
     setResults(filtered.slice(0, 6))
     setShowDropdown(true)
   }
@@ -2823,20 +2825,27 @@ function EnforcementView({ dispatches, onRefresh, onViewEvidence }) {
                 onClick={handleRescan}
                 disabled={scanning}
                 style={{
-                  background: scanning ? '#e2e8f0' : '#1e3a8a',
+                  background: scanning 
+                    ? 'linear-gradient(135deg, #e2e8f0 0%, #cbd5e1 100%)' 
+                    : 'linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%)',
                   color: scanning ? '#94a3b8' : '#ffffff',
                   border: 'none',
-                  borderRadius: '10px',
-                  padding: '10px 22px',
+                  borderRadius: '30px',
+                  padding: '8px 20px',
                   cursor: scanning ? 'not-allowed' : 'pointer',
                   fontSize: '13px',
                   fontWeight: '700',
                   display: 'flex',
                   alignItems: 'center',
-                  gap: '6px',
-                  boxShadow: scanning ? 'none' : '0 2px 8px rgba(30, 58, 138, 0.2)',
-                  transition: 'all 0.2s'
+                  gap: '8px',
+                  boxShadow: scanning ? 'none' : '0 4px 12px rgba(37, 99, 235, 0.25)',
+                  transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
+                  transform: 'scale(1)',
                 }}
+                onMouseOver={e => { if(!scanning) { e.currentTarget.style.transform = 'scale(1.04)'; e.currentTarget.style.boxShadow = '0 6px 16px rgba(37, 99, 235, 0.35)'; } }}
+                onMouseOut={e => { e.currentTarget.style.transform = 'scale(1)'; e.currentTarget.style.boxShadow = scanning ? 'none' : '0 4px 12px rgba(37, 99, 235, 0.25)'; }}
+                onMouseDown={e => { if(!scanning) e.currentTarget.style.transform = 'scale(0.97)'; }}
+                onMouseUp={e => { if(!scanning) e.currentTarget.style.transform = 'scale(1.04)'; }}
               >
                 <RefreshCw size={14} style={{ animation: scanning ? 'spin 1s linear infinite' : 'none' }} />
                 {scanning ? 'Scanning...' : 'Scan Now'}
