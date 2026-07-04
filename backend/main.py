@@ -104,35 +104,66 @@ async def startup_event():
     print(f"[STARTUP] RESEND_API_KEY from .env file:  {'SET (len={})'.format(len(resend_from_env)) if resend_from_env else 'NOT SET'}")
     print(f"[STARTUP] All env keys containing 'RESEND': {[k for k in os.environ if 'RESEND' in k.upper()]}")
     print(f"[STARTUP] All env keys containing 'API':    {[k for k in os.environ if 'API' in k.upper()]}")
-    # Pre-train ALL live cities in the background
-    from simulation import LIVE_CITIES
+    # Pre-train live cities in the background, in two tiers.
+    #
+    # Nothing about page load actually depends on this finishing — index.html
+    # is served unconditionally from static files, /api/state doesn't touch
+    # the forecaster at all, and /api/forecast already returns a real-data
+    # fallback instantly for any city without a trained model yet (see
+    # AQIForecaster.generate_ml_forecast). So this used to be safe to make as
+    # slow as it wanted... in theory. In practice, training all 36 cities
+    # eagerly at startup — even bounded to 3 concurrent — kept the CPU-bound
+    # GBM fitting busy for 15-20 minutes, and because that fitting ran on
+    # worker *threads* sharing this process's one GIL, heavy concurrent
+    # fitting could still starve the event loop enough that a visitor's very
+    # first page load stalled noticeably. Two changes fix that:
+    #   1. forecaster.py now runs the CPU-bound fit in a separate PROCESS
+    #      (ProcessPoolExecutor), which has its own GIL and truly cannot
+    #      block this process's event loop, no matter how many cities train
+    #      at once.
+    #   2. Startup itself now only eagerly trains a small PRIORITY_CITIES
+    #      set — enough that the most commonly viewed cities have real ML
+    #      forecasts within the first training pass — and trains everything
+    #      else afterward, at lower concurrency, without the rest of the
+    #      app waiting on it in any way. Any city outside PRIORITY_CITIES
+    #      still gets its own model lazily the first time someone actually
+    #      requests its forecast, serving the accurate real-data fallback
+    #      in the meantime.
+    from simulation import LIVE_CITIES, DEFAULT_CITY as _DEFAULT_CITY
     PARENT_CITIES = [k for k in LIVE_CITIES if "_" not in k]
+    _priority_env = os.environ.get("PRIORITY_CITIES", "").strip()
+    if _priority_env:
+        PRIORITY_CITIES = [c.strip() for c in _priority_env.split(",") if c.strip() in PARENT_CITIES]
+    else:
+        # Default city plus a handful of the largest/most-visited metros.
+        PRIORITY_CITIES = [c for c in [
+            _DEFAULT_CITY, "delhi", "mumbai", "bengaluru", "hyderabad", "kolkata", "chennai",
+        ] if c in PARENT_CITIES]
+    REMAINING_CITIES = [c for c in PARENT_CITIES if c not in PRIORITY_CITIES]
 
-    async def train_all():
+    async def train_priority_then_rest():
         import logging
         log = logging.getLogger("main")
-        # Train cities concurrently (bounded pool) instead of one-at-a-time with a
-        # hardcoded 5s cooldown between each. That old loop was the reason startup
-        # training crawled at 5+ seconds per city and, combined with the lock that
-        # used to span the whole fetch+train pipeline in forecaster.py, could stall
-        # unrelated requests too. forecaster.train_all_cities() already fetches AQ
-        # + weather concurrently per city, retries 429s with capped backoff, and
-        # runs the CPU-bound model fitting in a worker thread — so a handful of
-        # cities training at once is safe and no longer blocks the event loop.
-        # TRAIN_CONCURRENCY is tunable via env if you ever see 429s/timeouts in
-        # practice. Lowered from 6 to 3: the historical-data fetch hits Open-
-        # Meteo's dedicated historical-forecast host with a 14-day range per
-        # city, and 6-way concurrent load against it was implicated in the
-        # ConnectTimeout failures seen in production.
         concurrency = int(os.environ.get("TRAIN_CONCURRENCY", "3"))
         t0 = datetime.now()
         try:
-            await forecaster.train_all_cities(city_keys=PARENT_CITIES, concurrency=concurrency)
+            await forecaster.train_all_cities(city_keys=PRIORITY_CITIES, concurrency=concurrency)
         except Exception as e:
-            log.error(f"Startup training batch failed: {type(e).__name__}: {e or 'no details'}")
-        log.info(f"Startup training for {len(PARENT_CITIES)} cities finished in "
-                 f"{(datetime.now() - t0).total_seconds():.1f}s ({concurrency} concurrent).")
-    asyncio.create_task(train_all())
+            log.error(f"Priority-city training failed: {type(e).__name__}: {e or 'no details'}")
+        log.info(f"Priority training for {len(PRIORITY_CITIES)} cities finished in "
+                 f"{(datetime.now() - t0).total_seconds():.1f}s ({concurrency} concurrent). "
+                 f"App is fully servable now — remaining {len(REMAINING_CITIES)} cities train in the background.")
+
+        if REMAINING_CITIES:
+            t1 = datetime.now()
+            try:
+                await forecaster.train_all_cities(city_keys=REMAINING_CITIES, concurrency=concurrency)
+            except Exception as e:
+                log.error(f"Background training batch failed: {type(e).__name__}: {e or 'no details'}")
+            log.info(f"Background training for {len(REMAINING_CITIES)} remaining cities finished in "
+                     f"{(datetime.now() - t1).total_seconds():.1f}s ({concurrency} concurrent).")
+
+    asyncio.create_task(train_priority_then_rest())
 
     # Start the background alert loop
     async def alert_loop():
@@ -939,6 +970,18 @@ async def get_alerts(city: str = Query(default=DEFAULT_CITY)):
                 })
     alerts.sort(key=lambda x: -x["aqi"])
     return {"alerts": alerts, "count": len(alerts)}
+
+
+@app.get("/api/training-status")
+def get_training_status():
+    """Lightweight status the frontend can poll on load: which cities already
+    have a trained ML model vs. are still being trained in the background
+    (and therefore serving the real-data fallback forecast). Never blocks —
+    reads an in-memory dict, no locks, no network calls.
+    """
+    from simulation import LIVE_CITIES
+    parent_cities = [k for k in LIVE_CITIES if "_" not in k]
+    return forecaster.get_training_status(parent_cities)
 
 
 @app.get("/api/wards")

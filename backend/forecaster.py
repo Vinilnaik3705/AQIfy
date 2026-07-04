@@ -1,8 +1,10 @@
+import os
 import sys
 import numpy as np
 import httpx
 import logging
 import asyncio
+from concurrent.futures import ProcessPoolExecutor
 from datetime import datetime, timedelta
 from typing import Dict, List, Any, Tuple, Optional
 from sklearn.ensemble import GradientBoostingRegressor
@@ -67,6 +69,139 @@ QUANTILE_HI = 0.90
 _HTTP_TIMEOUT = httpx.Timeout(connect=5.0, read=12.0, write=8.0, pool=5.0)
 _HTTP_CLIENT = httpx.AsyncClient(timeout=_HTTP_TIMEOUT)
 
+# ── Process pool for CPU-bound GBM fitting ─────────────────────────────────
+# sklearn's GradientBoostingRegressor.fit() spends most of its time in its own
+# Python-level boosting loop, which holds the GIL far more than vectorized
+# numpy code does. Running several fits concurrently via asyncio.to_thread
+# put them on OS threads *inside this same process*, so they all fought over
+# that one GIL — meaning a page load or fallback API call from a real visitor
+# could get stuck behind whatever city was mid-boosting-iteration, even
+# though nothing was technically "awaiting" on it. That contention, not any
+# actual await-blocking, is why the UI could feel frozen while cities trained
+# in the background. A ProcessPoolExecutor gives each fit its own interpreter
+# and its own GIL, so CPU-bound training runs in genuine parallel across CPU
+# cores and can never block this process's asyncio event loop.
+_TRAIN_PROCESS_POOL = ProcessPoolExecutor(
+    max_workers=max(1, min(4, os.cpu_count() or 4))
+)
+
+
+def _walk_forward_split(n_samples: int, n_folds: int = 3
+                        ) -> List[Tuple[np.ndarray, np.ndarray]]:
+    """Generate walk-forward (expanding window) train/val index splits.
+
+    Module-level (not a method) so it has no dependency on a class instance —
+    that's what lets `_fit_all_horizons_worker` below run inside a separate
+    process via ProcessPoolExecutor, since only plain functions/data (not
+    bound methods holding an asyncio.Lock) can be pickled across that boundary.
+    """
+    fold_size = n_samples // (n_folds + 1)
+    if fold_size < 24:
+        # Not enough data for multiple folds — single split
+        split = int(n_samples * 0.75)
+        return [(np.arange(split), np.arange(split, n_samples))]
+
+    splits = []
+    for fold in range(n_folds):
+        train_end = fold_size * (fold + 2)  # expanding window
+        val_start = train_end
+        val_end = min(train_end + fold_size, n_samples)
+        if val_end <= val_start:
+            continue
+        splits.append((np.arange(train_end), np.arange(val_start, val_end)))
+    return splits
+
+
+def _fit_all_horizons_worker(horizon_datasets: Dict[int, Tuple[np.ndarray, np.ndarray]],
+                             city_key: str
+                             ) -> Tuple[Dict[int, Any], Dict[int, Any], Dict[int, Any], Dict[str, Any]]:
+    """Synchronous, CPU-bound: walk-forward CV + final fit for every horizon.
+
+    Runs inside a worker PROCESS (ProcessPoolExecutor), not just a worker
+    thread — see the `_TRAIN_PROCESS_POOL` comment above for why. Being a
+    plain module-level function (no `self`, no logger handles shared with the
+    parent process) is what makes it safe to pickle and ship to that process.
+    Returns empty dicts if nothing could be trained.
+    """
+    # Each process needs its own logger handler — module-level `logger` was
+    # created in the parent process; a fresh child process re-imports this
+    # module and gets its own copy, so this just works via the normal
+    # module-level `logger` defined above.
+    models: Dict[int, GradientBoostingRegressor] = {}
+    q_lo_models: Dict[int, GradientBoostingRegressor] = {}
+    q_hi_models: Dict[int, GradientBoostingRegressor] = {}
+
+    all_mae, all_persist_mae = [], []
+    all_dir_correct, all_dir_total = 0, 0
+
+    for h in HORIZONS:
+        if h not in horizon_datasets:
+            logger.warning(f"Skipping horizon {h}h for {city_key}: no data")
+            continue
+
+        X, y_delta = horizon_datasets[h]
+        if len(X) < 48:
+            logger.warning(f"Skipping horizon {h}h for {city_key}: only {len(X)} samples")
+            continue
+
+        # ── Walk-forward CV to compute metrics ──
+        splits = _walk_forward_split(len(X), n_folds=CV_FOLDS)
+        fold_maes, fold_persist_maes = [], []
+        fold_dir_correct, fold_dir_total = 0, 0
+
+        for train_idx, val_idx in splits:
+            X_tr, y_tr = X[train_idx], y_delta[train_idx]
+            X_vl, y_vl = X[val_idx], y_delta[val_idx]
+
+            m = GradientBoostingRegressor(loss="squared_error", **GBM_PARAMS)
+            m.fit(X_tr, y_tr)
+            preds = m.predict(X_vl)
+
+            fold_maes.append(float(np.mean(np.abs(y_vl - preds))))
+            fold_persist_maes.append(float(np.mean(np.abs(y_vl))))
+            dir_match = np.sign(preds) == np.sign(y_vl)
+            fold_dir_correct += int(np.sum(dir_match))
+            fold_dir_total += len(y_vl)
+
+        all_mae.append(np.mean(fold_maes))
+        all_persist_mae.append(np.mean(fold_persist_maes))
+        all_dir_correct += fold_dir_correct
+        all_dir_total += fold_dir_total
+
+        # ── Train final models on all data ──
+        model = GradientBoostingRegressor(loss="squared_error", **GBM_PARAMS)
+        model.fit(X, y_delta)
+        models[h] = model
+
+        q_lo = GradientBoostingRegressor(loss="quantile", alpha=QUANTILE_LO, **GBM_PARAMS)
+        q_lo.fit(X, y_delta)
+        q_lo_models[h] = q_lo
+
+        q_hi = GradientBoostingRegressor(loss="quantile", alpha=QUANTILE_HI, **GBM_PARAMS)
+        q_hi.fit(X, y_delta)
+        q_hi_models[h] = q_hi
+
+    if not models:
+        return {}, {}, {}, {}
+
+    avg_mae = float(np.mean(all_mae)) if all_mae else 0.0
+    avg_persist_mae = float(np.mean(all_persist_mae)) if all_persist_mae else 1.0
+    dir_acc = all_dir_correct / max(1, all_dir_total)
+    skill = 1.0 - (avg_mae / max(1.0, avg_persist_mae))
+    residual_std = max(5.0, avg_mae * 1.5)
+
+    metrics = {
+        "ml_mae": round(avg_mae, 2),
+        "persistence_mae": round(avg_persist_mae, 2),
+        "directional_accuracy": round(dir_acc, 3),
+        "skill_score": round(skill, 3),
+        "residual_std": round(residual_std, 2),
+        "training_samples": sum(len(horizon_datasets[h][0]) for h in horizon_datasets),
+        "validation_samples": all_dir_total,
+        "horizons_trained": sorted(list(models.keys())),
+    }
+    return models, q_lo_models, q_hi_models, metrics
+
 
 class AQIForecaster:
     """Direct-horizon delta-target AQI forecaster with quantile uncertainty."""
@@ -78,6 +213,24 @@ class AQIForecaster:
         self._models_cache: Dict[str, Dict[str, Any]] = {}
         self._cache_lock = asyncio.Lock()
         self._retrain_interval = timedelta(hours=RETRAIN_HOURS)
+
+    def get_training_status(self, city_keys: List[str]) -> Dict[str, Any]:
+        """Cheap, lock-free snapshot of which of `city_keys` have a trained
+        model ready vs. are still on the real-data fallback. Intended for a
+        `/api/training-status` endpoint the frontend can poll to render an
+        honest "live data now, ML forecast in ~Ns" state instead of either
+        blocking on training or showing nothing.
+        """
+        trained = [k for k in city_keys if k in self._models_cache]
+        pending = [k for k in city_keys if k not in self._models_cache]
+        return {
+            "total": len(city_keys),
+            "trained": len(trained),
+            "pending": len(pending),
+            "trained_cities": trained,
+            "pending_cities": pending,
+            "complete": len(pending) == 0,
+        }
 
     # ══════════════════════════════════════════════════════════════════════════
     # DATA FETCHING
@@ -588,26 +741,6 @@ class AQIForecaster:
     # WALK-FORWARD CROSS-VALIDATION & TRAINING
     # ══════════════════════════════════════════════════════════════════════════
 
-    @staticmethod
-    def _walk_forward_split(n_samples: int, n_folds: int = 3
-                            ) -> List[Tuple[np.ndarray, np.ndarray]]:
-        """Generate walk-forward (expanding window) train/val index splits."""
-        fold_size = n_samples // (n_folds + 1)
-        if fold_size < 24:
-            # Not enough data for multiple folds — single split
-            split = int(n_samples * 0.75)
-            return [(np.arange(split), np.arange(split, n_samples))]
-
-        splits = []
-        for fold in range(n_folds):
-            train_end = fold_size * (fold + 2)  # expanding window
-            val_start = train_end
-            val_end = min(train_end + fold_size, n_samples)
-            if val_end <= val_start:
-                continue
-            splits.append((np.arange(train_end), np.arange(val_start, val_end)))
-        return splits
-
     async def train_for_city(self, city_key: str, force: bool = False):
         """Train direct-horizon delta-target models for a city.
 
@@ -644,15 +777,21 @@ class AQIForecaster:
             logger.error(f"Cannot train for {city_key}: insufficient samples")
             return
 
-        # ── CPU-bound GBM fitting: offloaded to a worker thread ──
-        # sklearn's .fit() is synchronous and can take seconds per model with
-        # no await points, which previously blocked the ENTIRE asyncio event
-        # loop — including unrelated requests just trying to load cached/
-        # fallback data for the screen. Running it via asyncio.to_thread keeps
-        # the loop free to serve everything else while this city trains.
+        # ── CPU-bound GBM fitting: offloaded to a separate PROCESS ──
+        # sklearn's .fit() is synchronous and holds the GIL for long stretches
+        # of its own Python-level boosting loop. Running it via
+        # asyncio.to_thread put it on a worker THREAD in this same process,
+        # which still shares one GIL with the event loop — under load from
+        # several cities training at once, that contention was enough to make
+        # unrelated requests (a visitor just loading the page) feel stuck,
+        # even though nothing was technically "awaiting" on the training.
+        # run_in_executor against a ProcessPoolExecutor instead runs the fit
+        # in its own interpreter with its own GIL, so it can never starve
+        # this process's event loop no matter how much math it's doing.
         try:
-            models, q_lo_models, q_hi_models, metrics = await asyncio.to_thread(
-                self._fit_all_horizons, horizon_datasets, city_key
+            loop = asyncio.get_running_loop()
+            models, q_lo_models, q_hi_models, metrics = await loop.run_in_executor(
+                _TRAIN_PROCESS_POOL, _fit_all_horizons_worker, horizon_datasets, city_key
             )
         except Exception as e:
             logger.error(f"Training failed for {city_key}: {type(e).__name__}: {e or 'no details'}")
@@ -676,87 +815,6 @@ class AQIForecaster:
         logger.info(f"Trained {len(models)} horizon models for {city_key}. "
                     f"MAE={metrics['ml_mae']:.1f} vs Persistence={metrics['persistence_mae']:.1f}, "
                     f"DirAcc={metrics['directional_accuracy']:.1%}, Skill={metrics['skill_score']:.3f}")
-
-    def _fit_all_horizons(self, horizon_datasets: Dict[int, Tuple[np.ndarray, np.ndarray]],
-                          city_key: str) -> Tuple[Dict[int, Any], Dict[int, Any], Dict[int, Any], Dict[str, Any]]:
-        """Synchronous, CPU-bound: walk-forward CV + final fit for every horizon.
-        Runs inside a worker thread (asyncio.to_thread) — must not touch asyncio
-        state directly. Returns empty dicts if nothing could be trained.
-        """
-        models: Dict[int, GradientBoostingRegressor] = {}
-        q_lo_models: Dict[int, GradientBoostingRegressor] = {}
-        q_hi_models: Dict[int, GradientBoostingRegressor] = {}
-
-        all_mae, all_persist_mae = [], []
-        all_dir_correct, all_dir_total = 0, 0
-
-        for h in HORIZONS:
-            if h not in horizon_datasets:
-                logger.warning(f"Skipping horizon {h}h for {city_key}: no data")
-                continue
-
-            X, y_delta = horizon_datasets[h]
-            if len(X) < 48:
-                logger.warning(f"Skipping horizon {h}h for {city_key}: only {len(X)} samples")
-                continue
-
-            # ── Walk-forward CV to compute metrics ──
-            splits = self._walk_forward_split(len(X), n_folds=CV_FOLDS)
-            fold_maes, fold_persist_maes = [], []
-            fold_dir_correct, fold_dir_total = 0, 0
-
-            for train_idx, val_idx in splits:
-                X_tr, y_tr = X[train_idx], y_delta[train_idx]
-                X_vl, y_vl = X[val_idx], y_delta[val_idx]
-
-                m = GradientBoostingRegressor(loss="squared_error", **GBM_PARAMS)
-                m.fit(X_tr, y_tr)
-                preds = m.predict(X_vl)
-
-                fold_maes.append(float(np.mean(np.abs(y_vl - preds))))
-                fold_persist_maes.append(float(np.mean(np.abs(y_vl))))
-                dir_match = np.sign(preds) == np.sign(y_vl)
-                fold_dir_correct += int(np.sum(dir_match))
-                fold_dir_total += len(y_vl)
-
-            all_mae.append(np.mean(fold_maes))
-            all_persist_mae.append(np.mean(fold_persist_maes))
-            all_dir_correct += fold_dir_correct
-            all_dir_total += fold_dir_total
-
-            # ── Train final models on all data ──
-            model = GradientBoostingRegressor(loss="squared_error", **GBM_PARAMS)
-            model.fit(X, y_delta)
-            models[h] = model
-
-            q_lo = GradientBoostingRegressor(loss="quantile", alpha=QUANTILE_LO, **GBM_PARAMS)
-            q_lo.fit(X, y_delta)
-            q_lo_models[h] = q_lo
-
-            q_hi = GradientBoostingRegressor(loss="quantile", alpha=QUANTILE_HI, **GBM_PARAMS)
-            q_hi.fit(X, y_delta)
-            q_hi_models[h] = q_hi
-
-        if not models:
-            return {}, {}, {}, {}
-
-        avg_mae = float(np.mean(all_mae)) if all_mae else 0.0
-        avg_persist_mae = float(np.mean(all_persist_mae)) if all_persist_mae else 1.0
-        dir_acc = all_dir_correct / max(1, all_dir_total)
-        skill = 1.0 - (avg_mae / max(1.0, avg_persist_mae))
-        residual_std = max(5.0, avg_mae * 1.5)
-
-        metrics = {
-            "ml_mae": round(avg_mae, 2),
-            "persistence_mae": round(avg_persist_mae, 2),
-            "directional_accuracy": round(dir_acc, 3),
-            "skill_score": round(skill, 3),
-            "residual_std": round(residual_std, 2),
-            "training_samples": sum(len(horizon_datasets[h][0]) for h in horizon_datasets),
-            "validation_samples": all_dir_total,
-            "horizons_trained": sorted(list(models.keys())),
-        }
-        return models, q_lo_models, q_hi_models, metrics
 
     async def train_all_cities(self, city_keys: Optional[List[str]] = None,
                                concurrency: int = 8, force: bool = False) -> None:
