@@ -1269,7 +1269,7 @@ function CommandCenter({ state, selectedWard, forecast, onSelectWard, mapStyle, 
           : labelHour === 0
             ? dt.toLocaleDateString('en-US', { weekday: 'short' })
             : String(labelHour).padStart(2, '0') + ':00';
-        const hourlyAqi = Math.round(wardForecast?.predicted_aqi ?? trendAqi);
+        const hourlyAqi = idx === 0 ? Math.round(trendAqi) : Math.round(wardForecast?.predicted_aqi ?? trendAqi);
         const forecastWind = Math.round(wardForecast?.wind_speed_kmh ?? windKmh);
         const isNight = labelHour < 6 || labelHour > 18;
 
