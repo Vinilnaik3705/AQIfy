@@ -7,7 +7,9 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Any, Tuple, Optional
 from sklearn.ensemble import GradientBoostingRegressor
 from scipy.interpolate import PchipInterpolator
-from simulation import CITIES, DEFAULT_CITY, LIVE_CITIES, calculate_indian_aqi, _us_aqi_to_pm25, _us_aqi_to_pm10
+from simulation import (CITIES, DEFAULT_CITY, LIVE_CITIES, calculate_indian_aqi,
+                        _us_aqi_to_pm25, _us_aqi_to_pm10, _get_openweather_key,
+                        _get_weatherapi_key)
 
 # ── Windows-safe logging ──────────────────────────────────────────────────────
 # Open-Meteo's historical AQ payloads carry unit metadata with non-ASCII
@@ -85,9 +87,10 @@ class AQIForecaster:
     async def _fetch_with_retry(url: str, params: Dict[str, Any],
                                 max_retries: int = 2) -> Optional[httpx.Response]:
         """GET with capped exponential backoff on 429/timeout.
-        Bounded worst case (~2s + 4s = 6s of backoff, plus the request itself)
-        instead of the previous up-to-4-retry/40s-wait scheme, so one flaky
-        city can no longer stall the whole training queue for a minute-plus.
+        max_retries is caller-tunable: the historical-data fetch (a background
+        job on a multi-hour retrain cycle, never on the user request path) asks
+        for a more patient budget than the default, since there's no user
+        waiting on it and a slow success beats a fast failure there.
         """
         last_exc: Optional[Exception] = None
         for attempt in range(max_retries + 1):
@@ -105,7 +108,9 @@ class AQIForecaster:
             except httpx.TimeoutException as e:
                 last_exc = e
                 if attempt < max_retries:
-                    logger.warning(f"Timeout fetching {url} (attempt {attempt+1}/{max_retries+1}), retrying...")
+                    wait = min(8.0, 1.5 * (2 ** attempt))
+                    logger.warning(f"Timeout fetching {url} (attempt {attempt+1}/{max_retries+1}), retrying in {wait:.1f}s...")
+                    await asyncio.sleep(wait)
                     continue
             except Exception as e:
                 last_exc = e
@@ -117,9 +122,65 @@ class AQIForecaster:
             logger.error(f"Failed to fetch {url}: {type(last_exc).__name__}: {last_exc or '(no message from exception)'}")
         return None
 
+    async def _fetch_historical_aqi_openweather(self, lat: float, lng: float,
+                                                start_date: datetime, end_date: datetime
+                                                ) -> Optional[Dict[str, List[Any]]]:
+        """Fallback historical AQ source: OpenWeather's Air Pollution "history"
+        endpoint. Free on every OpenWeather plan (data available from
+        2020-11-27), used only when Open-Meteo's own AQ call fails outright —
+        which hasn't been observed in practice, but costs nothing to have as
+        a safety net since Open-Meteo and OpenWeather are independent services.
+        Returns the same raw-key shape Open-Meteo's response uses so the
+        caller's merge logic doesn't need to branch on more than the source name.
+        """
+        key = _get_openweather_key()
+        if not key:
+            return None
+        url = "http://api.openweathermap.org/data/2.5/air_pollution/history"
+        params = {
+            "lat": lat, "lon": lng,
+            "start": int(start_date.timestamp()),
+            "end": int(end_date.timestamp()) + 86400,
+            "appid": key,
+        }
+        resp = await self._fetch_with_retry(url, params, max_retries=2)
+        if resp is None:
+            return None
+        try:
+            items = resp.json().get("list", [])
+            if not items:
+                return None
+            out: Dict[str, List[Any]] = {"time": [], "pm2_5": [], "pm10": [],
+                                         "nitrogen_dioxide": [], "sulphur_dioxide": [],
+                                         "ozone": [], "carbon_monoxide": []}
+            for item in items:
+                c = item.get("components", {})
+                out["time"].append(datetime.utcfromtimestamp(item["dt"]).strftime("%Y-%m-%dT%H:%M"))
+                out["pm2_5"].append(c.get("pm2_5"))
+                out["pm10"].append(c.get("pm10"))
+                out["nitrogen_dioxide"].append(c.get("no2"))
+                out["sulphur_dioxide"].append(c.get("so2"))
+                out["ozone"].append(c.get("o3"))
+                out["carbon_monoxide"].append(c.get("co"))
+            return out
+        except Exception as e:
+            logger.error(f"Failed to parse OpenWeather historical AQI: {type(e).__name__}: {e or '(no message)'}")
+            return None
+
     async def get_historical_data(self, lat: float, lng: float,
                                   days: int = HISTORY_DAYS) -> Optional[Dict[str, List[float]]]:
-        """Fetch historical hourly AQ + weather data from Open-Meteo (up to *days* days)."""
+        """Fetch historical hourly AQ + weather data (up to *days* days).
+
+        Weather comes from Open-Meteo's Historical Forecast API
+        (historical-forecast-api.open-meteo.com) rather than the live
+        /v1/forecast endpoint. The live endpoint isn't meant for multi-week
+        lookback and was the source of the ConnectTimeout failures seen in
+        production — the Historical Forecast API is a separate host built
+        specifically for recent-past model output and isn't subject to the
+        same load. AQ falls back to OpenWeather's history endpoint if
+        Open-Meteo's AQ call fails (rare — it hasn't failed in practice, but
+        it's a free, independent safety net).
+        """
         end_date = datetime.now() - timedelta(days=1)
         start_date = end_date - timedelta(days=days)
         start_str = start_date.strftime("%Y-%m-%d")
@@ -133,7 +194,7 @@ class AQIForecaster:
             "start_date": start_str, "end_date": end_str,
         }
 
-        weather_url = "https://api.open-meteo.com/v1/forecast"
+        weather_url = "https://historical-forecast-api.open-meteo.com/v1/forecast"
         weather_params = {
             "latitude": lat, "longitude": lng,
             "hourly": "temperature_2m,relative_humidity_2m,wind_speed_10m,"
@@ -145,26 +206,35 @@ class AQIForecaster:
             # Fetch AQ + weather concurrently instead of sequentially — this alone
             # roughly halves the wall-clock time per city, since previously the
             # weather request (with its own retry loop) only started after the AQ
-            # request had fully completed.
+            # request had fully completed. This is a background training call, not
+            # on the user request path, so it gets a more patient retry budget
+            # (4 attempts) than the default used for user-facing calls.
             aq_resp, weather_resp = await asyncio.gather(
-                self._fetch_with_retry(aq_url, aq_params),
-                self._fetch_with_retry(weather_url, weather_params),
+                self._fetch_with_retry(aq_url, aq_params, max_retries=4),
+                self._fetch_with_retry(weather_url, weather_params, max_retries=4),
             )
 
-            if aq_resp is None or weather_resp is None:
+            aq_data: Optional[Dict[str, Any]] = None
+            aq_source = "open-meteo"
+            if aq_resp is not None:
+                # Open-Meteo always serves UTF-8 JSON (it's what carries the
+                # "µg/m³" unit metadata). Pin the decode encoding explicitly
+                # instead of relying on httpx's auto-detection.
+                aq_resp.encoding = "utf-8"
+                aq_data = aq_resp.json().get("hourly", {})
+            else:
+                aq_data = await self._fetch_historical_aqi_openweather(lat, lng, start_date, end_date)
+                aq_source = "openweather"
+
+            if aq_data is None or weather_resp is None:
                 logger.error(
                     f"Historical data fetch incomplete for ({lat:.4f},{lng:.4f}): "
-                    f"aq={'ok' if aq_resp is not None else 'failed'}, "
+                    f"aq={'ok (' + aq_source + ')' if aq_data is not None else 'failed'}, "
                     f"weather={'ok' if weather_resp is not None else 'failed'}"
                 )
                 return None
 
-            # Open-Meteo always serves UTF-8 JSON (it's what carries the "µg/m³"
-            # unit metadata). Pin the decode encoding explicitly instead of
-            # relying on httpx's auto-detection, which is unnecessary risk here.
-            aq_resp.encoding = "utf-8"
             weather_resp.encoding = "utf-8"
-            aq_data = aq_resp.json().get("hourly", {})
             weather_data = weather_resp.json().get("hourly", {})
 
             times = aq_data.get("time", [])
@@ -176,6 +246,10 @@ class AQIForecaster:
             # Apply the same calibration corrections used for current readings
             # (from simulation.py) so the training data reflects realistic
             # ground-station-level AQI dynamics rather than smoothed global model.
+            # This calibration is specific to CAMS (Open-Meteo's model) — the
+            # OpenWeather fallback path already reports ground-calibrated values,
+            # so it's passed through unscaled.
+            is_cams = aq_source == "open-meteo"
             raw_pm25 = aq_data.get("pm2_5", [])
             raw_pm10 = aq_data.get("pm10", [])
             pm25_list, pm10_list = [], []
@@ -187,23 +261,24 @@ class AQIForecaster:
                 # variation while anchoring to realistic ground-level values.
                 # Above 30 µg/m³, CAMS PM2.5 is ~30% too high relative to stations;
                 # below, it's reasonably accurate.
-                if pm25_raw > 30.0:
+                if is_cams and pm25_raw > 30.0:
                     pm25_cal = 30.0 + (pm25_raw - 30.0) * 0.7
                 else:
                     pm25_cal = pm25_raw
-                pm10_cal = min(pm10_raw, pm25_cal * 2.5)
+                pm10_cal = min(pm10_raw, pm25_cal * 2.5) if is_cams else pm10_raw
                 pm25_list.append(pm25_cal)
                 pm10_list.append(pm10_cal)
 
             safe = lambda lst, default=0.0: [v if v is not None else default for v in lst]
+            gas_scale = lambda v, factor: max(0.0, (v if v is not None else 0.0) * (factor if is_cams else 1.0))
 
             merged = {
                 "time": times,
                 "pm2_5": pm25_list,
                 "pm10": pm10_list,
-                "no2": [max(0.0, (v if v is not None else 0.0) * 0.5) for v in aq_data.get("nitrogen_dioxide", [])],
-                "so2": [max(0.0, (v if v is not None else 0.0) * 0.2) for v in aq_data.get("sulphur_dioxide", [])],
-                "o3": [max(0.0, (v if v is not None else 0.0) * 0.35) for v in aq_data.get("ozone", [])],
+                "no2": [gas_scale(v, 0.5) for v in aq_data.get("nitrogen_dioxide", [])],
+                "so2": [gas_scale(v, 0.2) for v in aq_data.get("sulphur_dioxide", [])],
+                "o3": [gas_scale(v, 0.35) for v in aq_data.get("ozone", [])],
                 "co": [co / 1000.0 if co is not None else 0.0
                        for co in aq_data.get("carbon_monoxide", [])],
                 "temp": safe(weather_data.get("temperature_2m", []), 25.0),
@@ -219,15 +294,59 @@ class AQIForecaster:
                         f"{type(e).__name__}: {e or '(no message from exception)'}")
             return None
 
+    async def _fetch_forecast_weather_weatherapi(self, lat: float, lng: float,
+                                                 days: int) -> Optional[Dict[str, List[float]]]:
+        """Primary forecast-weather source: WeatherAPI.com. Its free tier
+        covers up to 3 days hourly, which matches this app's forecast cap, and
+        its units (°C, km/h, mm, hPa) line up directly with Open-Meteo's
+        defaults — no conversion needed. Returns None (falls through to
+        Open-Meteo) if no WEATHERAPI_KEY is configured or the call fails.
+        """
+        key = _get_weatherapi_key()
+        if not key:
+            return None
+        url = "https://api.weatherapi.com/v1/forecast.json"
+        params = {"key": key, "q": f"{lat},{lng}", "days": min(max(days, 1), 3),
+                  "aqi": "no", "alerts": "no"}
+        resp = await self._fetch_with_retry(url, params)
+        if resp is None:
+            return None
+        try:
+            data = resp.json()
+            out: Dict[str, List[Any]] = {"time": [], "temp": [], "humidity": [],
+                                         "wind_speed": [], "wind_dir": [],
+                                         "precipitation": [], "pressure": []}
+            for day in data.get("forecast", {}).get("forecastday", []):
+                for hour in day.get("hour", []):
+                    out["time"].append(hour.get("time", "").replace(" ", "T"))
+                    out["temp"].append(hour.get("temp_c"))
+                    out["humidity"].append(hour.get("humidity"))
+                    out["wind_speed"].append(hour.get("wind_kph"))
+                    out["wind_dir"].append(hour.get("wind_degree"))
+                    out["precipitation"].append(hour.get("precip_mm"))
+                    out["pressure"].append(hour.get("pressure_mb"))
+            return out if out["time"] else None
+        except Exception as e:
+            logger.error(f"Failed to parse WeatherAPI forecast: {type(e).__name__}: {e or '(no message)'}")
+            return None
+
     async def get_forecast_weather(self, lat: float, lng: float,
                                    hours: int = 72) -> Optional[Dict[str, List[float]]]:
-        """Fetch future weather forecast from Open-Meteo."""
+        """Fetch future weather forecast. Tries WeatherAPI.com first (if
+        WEATHERAPI_KEY is set), falling back to Open-Meteo (unlimited, no key
+        required) if no key is configured or the WeatherAPI call fails.
+        """
+        days = min(max(hours // 24, 1), 3)
+        wapi_data = await self._fetch_forecast_weather_weatherapi(lat, lng, days)
+        if wapi_data is not None:
+            return wapi_data
+
         url = "https://api.open-meteo.com/v1/forecast"
         params = {
             "latitude": lat, "longitude": lng,
             "hourly": "temperature_2m,relative_humidity_2m,wind_speed_10m,"
                       "wind_direction_10m,precipitation,surface_pressure",
-            "forecast_days": min(max(hours // 24, 1), 3),
+            "forecast_days": days,
         }
         try:
             resp = await self._fetch_with_retry(url, params)
@@ -247,9 +366,41 @@ class AQIForecaster:
             logger.error(f"Error fetching forecast weather: {type(e).__name__}: {e or '(no message from exception)'}")
         return None
 
+    async def _fetch_forecast_aqi_openweather(self, lat: float, lng: float
+                                              ) -> Optional[Dict[str, List[float]]]:
+        """Fallback forecast-AQI source: OpenWeather's Air Pollution forecast
+        endpoint (free, 4-day hourly), used only if Open-Meteo's forecast AQI
+        call fails."""
+        key = _get_openweather_key()
+        if not key:
+            return None
+        url = "http://api.openweathermap.org/data/2.5/air_pollution/forecast"
+        resp = await self._fetch_with_retry(url, {"lat": lat, "lon": lng, "appid": key}, max_retries=2)
+        if resp is None:
+            return None
+        try:
+            items = resp.json().get("list", [])
+            if not items:
+                return None
+            out = {"time": [], "pm2_5": [], "pm10": [], "no2": [], "so2": [], "o3": [], "co": []}
+            for item in items:
+                c = item.get("components", {})
+                out["time"].append(datetime.utcfromtimestamp(item["dt"]).strftime("%Y-%m-%dT%H:%M"))
+                out["pm2_5"].append(c.get("pm2_5"))
+                out["pm10"].append(c.get("pm10"))
+                out["no2"].append(c.get("no2"))
+                out["so2"].append(c.get("so2"))
+                out["o3"].append(c.get("o3"))
+                out["co"].append((c.get("co") or 0.0) / 1000.0)
+            return out
+        except Exception as e:
+            logger.error(f"Failed to parse OpenWeather forecast AQI: {type(e).__name__}: {e or '(no message)'}")
+            return None
+
     async def get_forecast_raw_aqi(self, lat: float, lng: float,
                                    hours: int = 72) -> Optional[Dict[str, List[float]]]:
-        """Fetch raw Open-Meteo atmospheric forecast AQI elements."""
+        """Fetch raw atmospheric forecast AQI elements from Open-Meteo, falling
+        back to OpenWeather's forecast AQI endpoint if Open-Meteo fails."""
         url = "https://air-quality-api.open-meteo.com/v1/air-quality"
         params = {
             "latitude": lat, "longitude": lng,
@@ -273,7 +424,7 @@ class AQIForecaster:
                 }
         except Exception as e:
             logger.error(f"Error fetching raw AQI forecast: {type(e).__name__}: {e or '(no message from exception)'}")
-        return None
+        return await self._fetch_forecast_aqi_openweather(lat, lng)
 
     # ══════════════════════════════════════════════════════════════════════════
     # FEATURE ENGINEERING

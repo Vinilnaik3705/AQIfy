@@ -512,6 +512,25 @@ def _get_openaq_key() -> Optional[str]:
     return "89ae0b63c71785a9e539f889c5f71034472844adfaf77457f3feded3efd2aff0"  # fallback key
 
 
+def _get_weatherapi_key() -> Optional[str]:
+    """Retrieve the WeatherAPI.com API key from the environment variables or the local .env file."""
+    key = os.environ.get("WEATHERAPI_KEY")
+    if key:
+        return key
+    try:
+        env_path = os.path.join(os.path.dirname(__file__), ".env")
+        if not os.path.exists(env_path):
+            env_path = os.path.join(os.path.dirname(__file__), "../.env")
+        if os.path.exists(env_path):
+            with open(env_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    if line.strip().startswith("WEATHERAPI_KEY="):
+                        return line.strip().split("=", 1)[1].strip()
+    except Exception:
+        pass
+    return None
+
+
 def _us_aqi_to_pm25(aqi_val: float) -> float:
     """Reverse-map US AQI PM2.5 sub-index back to µg/m³ using EPA breakpoints.
     This gives a realistic PM2.5 concentration consistent with the AQI score."""

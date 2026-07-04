@@ -119,8 +119,12 @@ async def startup_event():
         # + weather concurrently per city, retries 429s with capped backoff, and
         # runs the CPU-bound model fitting in a worker thread — so a handful of
         # cities training at once is safe and no longer blocks the event loop.
-        # TRAIN_CONCURRENCY is tunable via env if you ever see 429s in practice.
-        concurrency = int(os.environ.get("TRAIN_CONCURRENCY", "6"))
+        # TRAIN_CONCURRENCY is tunable via env if you ever see 429s/timeouts in
+        # practice. Lowered from 6 to 3: the historical-data fetch hits Open-
+        # Meteo's dedicated historical-forecast host with a 14-day range per
+        # city, and 6-way concurrent load against it was implicated in the
+        # ConnectTimeout failures seen in production.
+        concurrency = int(os.environ.get("TRAIN_CONCURRENCY", "3"))
         t0 = datetime.now()
         try:
             await forecaster.train_all_cities(city_keys=PARENT_CITIES, concurrency=concurrency)
