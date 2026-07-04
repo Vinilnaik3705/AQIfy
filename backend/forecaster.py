@@ -213,6 +213,10 @@ class AQIForecaster:
         self._models_cache: Dict[str, Dict[str, Any]] = {}
         self._cache_lock = asyncio.Lock()
         self._retrain_interval = timedelta(hours=RETRAIN_HOURS)
+        # Cities with a train_for_city() call currently in flight. Prevents the
+        # same city being trained twice at once — see the comment in
+        # train_for_city() for why that was happening and why it mattered.
+        self._training_in_flight: set = set()
 
     def get_training_status(self, city_keys: List[str]) -> Dict[str, Any]:
         """Cheap, lock-free snapshot of which of `city_keys` have a trained
@@ -745,76 +749,96 @@ class AQIForecaster:
         """Train direct-horizon delta-target models for a city.
 
         IMPORTANT: the network fetch and the CPU-bound GBM fitting both run
-        OUTSIDE the cache lock, and the fitting itself runs in a worker thread
-        (see _fit_all_horizons). Previously the entire fetch+train pipeline for
-        a city ran while holding self._cache_lock, which meant every city's
-        training was fully serialized — one city (and everything waiting on
-        the lock, including screen-load requests) had to finish before the
-        next could even start its network call. That single bug was why
-        training looked "stuck" one city at a time and the UI felt frozen.
+        OUTSIDE the cache lock, and the fitting itself runs in a separate
+        process (see _fit_all_horizons_worker). Previously the entire
+        fetch+train pipeline for a city ran while holding self._cache_lock,
+        which meant every city's training was fully serialized — one city
+        (and everything waiting on the lock, including screen-load requests)
+        had to finish before the next could even start its network call.
+        That single bug was why training looked "stuck" one city at a time
+        and the UI felt frozen.
+
+        DEDUPE: this also guards against the *same* city being trained twice
+        concurrently. That was happening for real — the startup task trains
+        every city in the background, but generate_ml_forecast() ALSO kicks
+        off `train_for_city(city, force=True)` for any city without a model
+        yet, every time /api/forecast is hit for that city. Right after
+        startup, essentially every city has no model, so a single
+        `/api/forecast?city=all` request fired a *second*, fully redundant
+        training pass — including a second historical-data fetch — for all
+        ~36 cities at once, on top of the startup batch already in flight.
+        That doubling of concurrent requests against Open-Meteo's free tier
+        is what was producing the wall of 429s and ConnectTimeouts.
         """
-        now = datetime.now()
-        async with self._cache_lock:
-            cached = self._models_cache.get(city_key)
-            if cached and not force:
-                if now - cached["last_trained"] < self._retrain_interval:
-                    return
-
-        city_conf = CITIES.get(city_key, CITIES[DEFAULT_CITY])
-        lat, lng = city_conf["center"]
-
-        logger.info(f"Training direct-horizon models for {city_key} ...")
-        data = await self.get_historical_data(lat, lng, days=HISTORY_DAYS)
-        if not data:
-            logger.error(f"Cannot train for {city_key}: no historical data")
+        if city_key in self._training_in_flight:
+            logger.info(f"Skipping train_for_city({city_key}): already training.")
             return
-
-        aqi_series = self._compute_aqi_series(data)
-        city_baseline_aqi = float(np.mean(aqi_series)) if aqi_series else 100.0
-
-        horizon_datasets = self.build_horizon_datasets(data, aqi_series, city_baseline_aqi)
-        if not horizon_datasets:
-            logger.error(f"Cannot train for {city_key}: insufficient samples")
-            return
-
-        # ── CPU-bound GBM fitting: offloaded to a separate PROCESS ──
-        # sklearn's .fit() is synchronous and holds the GIL for long stretches
-        # of its own Python-level boosting loop. Running it via
-        # asyncio.to_thread put it on a worker THREAD in this same process,
-        # which still shares one GIL with the event loop — under load from
-        # several cities training at once, that contention was enough to make
-        # unrelated requests (a visitor just loading the page) feel stuck,
-        # even though nothing was technically "awaiting" on the training.
-        # run_in_executor against a ProcessPoolExecutor instead runs the fit
-        # in its own interpreter with its own GIL, so it can never starve
-        # this process's event loop no matter how much math it's doing.
+        self._training_in_flight.add(city_key)
         try:
-            loop = asyncio.get_running_loop()
-            models, q_lo_models, q_hi_models, metrics = await loop.run_in_executor(
-                _TRAIN_PROCESS_POOL, _fit_all_horizons_worker, horizon_datasets, city_key
-            )
-        except Exception as e:
-            logger.error(f"Training failed for {city_key}: {type(e).__name__}: {e or 'no details'}")
-            return
+            now = datetime.now()
+            async with self._cache_lock:
+                cached = self._models_cache.get(city_key)
+                if cached and not force:
+                    if now - cached["last_trained"] < self._retrain_interval:
+                        return
 
-        if not models:
-            logger.error(f"No models trained for {city_key}")
-            return
+            city_conf = CITIES.get(city_key, CITIES[DEFAULT_CITY])
+            lat, lng = city_conf["center"]
 
-        async with self._cache_lock:
-            self._models_cache[city_key] = {
-                "models": models,
-                "q_lo": q_lo_models,
-                "q_hi": q_hi_models,
-                "last_trained": now,
-                "metrics": metrics,
-                "last_historical_data": data,
-                "aqi_series": aqi_series,
-                "city_baseline_aqi": city_baseline_aqi,
-            }
-        logger.info(f"Trained {len(models)} horizon models for {city_key}. "
-                    f"MAE={metrics['ml_mae']:.1f} vs Persistence={metrics['persistence_mae']:.1f}, "
-                    f"DirAcc={metrics['directional_accuracy']:.1%}, Skill={metrics['skill_score']:.3f}")
+            logger.info(f"Training direct-horizon models for {city_key} ...")
+            data = await self.get_historical_data(lat, lng, days=HISTORY_DAYS)
+            if not data:
+                logger.error(f"Cannot train for {city_key}: no historical data")
+                return
+
+            aqi_series = self._compute_aqi_series(data)
+            city_baseline_aqi = float(np.mean(aqi_series)) if aqi_series else 100.0
+
+            horizon_datasets = self.build_horizon_datasets(data, aqi_series, city_baseline_aqi)
+            if not horizon_datasets:
+                logger.error(f"Cannot train for {city_key}: insufficient samples")
+                return
+
+            # ── CPU-bound GBM fitting: offloaded to a separate PROCESS ──
+            # sklearn's .fit() is synchronous and holds the GIL for long stretches
+            # of its own Python-level boosting loop. Running it via
+            # asyncio.to_thread put it on a worker THREAD in this same process,
+            # which still shares one GIL with the event loop — under load from
+            # several cities training at once, that contention was enough to make
+            # unrelated requests (a visitor just loading the page) feel stuck,
+            # even though nothing was technically "awaiting" on the training.
+            # run_in_executor against a ProcessPoolExecutor instead runs the fit
+            # in its own interpreter with its own GIL, so it can never starve
+            # this process's event loop no matter how much math it's doing.
+            try:
+                loop = asyncio.get_running_loop()
+                models, q_lo_models, q_hi_models, metrics = await loop.run_in_executor(
+                    _TRAIN_PROCESS_POOL, _fit_all_horizons_worker, horizon_datasets, city_key
+                )
+            except Exception as e:
+                logger.error(f"Training failed for {city_key}: {type(e).__name__}: {e or 'no details'}")
+                return
+
+            if not models:
+                logger.error(f"No models trained for {city_key}")
+                return
+
+            async with self._cache_lock:
+                self._models_cache[city_key] = {
+                    "models": models,
+                    "q_lo": q_lo_models,
+                    "q_hi": q_hi_models,
+                    "last_trained": now,
+                    "metrics": metrics,
+                    "last_historical_data": data,
+                    "aqi_series": aqi_series,
+                    "city_baseline_aqi": city_baseline_aqi,
+                }
+            logger.info(f"Trained {len(models)} horizon models for {city_key}. "
+                        f"MAE={metrics['ml_mae']:.1f} vs Persistence={metrics['persistence_mae']:.1f}, "
+                        f"DirAcc={metrics['directional_accuracy']:.1%}, Skill={metrics['skill_score']:.3f}")
+        finally:
+            self._training_in_flight.discard(city_key)
 
     async def train_all_cities(self, city_keys: Optional[List[str]] = None,
                                concurrency: int = 8, force: bool = False) -> None:

@@ -426,9 +426,24 @@ async def get_forecast(
     if not cities_to_process:
         return raw_forecast
         
-    # Generate ML forecasts in parallel
+    # Generate ML forecasts with BOUNDED concurrency instead of all at once.
+    # For city="all" this list is every parent city (~36) — asyncio.gather
+    # over all of them unbounded fired ~36 simultaneous forecast-weather +
+    # forecast-AQI calls at Open-Meteo for a single page load, on top of
+    # whatever background training was also in flight. That burst is what
+    # produced the wall of "Timeout fetching .../v1/forecast" errors: it's
+    # not that Open-Meteo is unreliable, it's that one request to this
+    # endpoint was generating dozens of concurrent outbound calls. A small
+    # semaphore keeps this endpoint's own fan-out sane regardless of how
+    # many cities exist. FORECAST_CONCURRENCY is tunable via env.
+    _forecast_semaphore = asyncio.Semaphore(int(os.environ.get("FORECAST_CONCURRENCY", "6")))
+
+    async def _bounded_ml_forecast(c: str):
+        async with _forecast_semaphore:
+            return await forecaster.generate_ml_forecast(c, hours)
+
     ml_forecasts = {}
-    tasks = {c: forecaster.generate_ml_forecast(c, hours) for c in cities_to_process}
+    tasks = {c: _bounded_ml_forecast(c) for c in cities_to_process}
     results = await asyncio.gather(*tasks.values(), return_exceptions=True)
     
     for c, res in zip(tasks.keys(), results):
