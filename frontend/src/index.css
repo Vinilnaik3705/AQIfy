@@ -4,6 +4,15 @@
 
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;850&family=JetBrains+Mono:wght@400;600&display=swap');
 
+/* Hide Google Translate's default banner bar and branding — we use a custom dropdown */
+.goog-te-banner-frame, .goog-te-balloon-frame, #goog-gt-tt,
+.goog-te-gadget, .goog-te-combo, .goog-logo-link,
+.VIpgJd-ZVi9od-ORHb-OEVmcd, .VIpgJd-ZVi9od-l4eHX-hSRGPd {
+  display: none !important;
+}
+body { top: 0 !important; }
+.skiptranslate { display: none !important; }
+
 :root {
   --bg-base:        #ffffff;
   --bg-surface:     #ffffff;

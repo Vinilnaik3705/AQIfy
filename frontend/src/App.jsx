@@ -122,13 +122,6 @@ const TABS = [
   { id: 'analytics', icon: ICONS.analytics, label: 'Analytics' },
 ]
 
-const LANGUAGES = [
-  { code: 'en', label: 'English' },
-  { code: 'hi', label: 'हिन्दी (Hindi)' },
-  { code: 'kn', label: 'ಕನ್ನಡ (Kannada)' },
-  { code: 'ta', label: 'தமிழ் (Tamil)' },
-  { code: 'te', label: 'తెలుగు (Telugu)' },
-]
 
 /* ── API Helpers ────────────────────────────────────────────────────────── */
 
@@ -626,6 +619,135 @@ function HeaderSearch({ onSelectPlace, wards = [], onSelectWard }) {
   )
 }
 
+/* ── Language Selector (Custom UI for Google Translate) ────────────────── */
+
+const LANGUAGES = [
+  { code: 'en', label: 'English', flag: '🇬🇧' },
+  { code: 'hi', label: 'हिन्दी', flag: '🇮🇳' },
+  { code: 'kn', label: 'ಕನ್ನಡ', flag: '🇮🇳' },
+  { code: 'ta', label: 'தமிழ்', flag: '🇮🇳' },
+  { code: 'te', label: 'తెలుగు', flag: '🇮🇳' },
+  { code: 'ml', label: 'മലയാളം', flag: '🇮🇳' },
+  { code: 'mr', label: 'मराठी', flag: '🇮🇳' },
+  { code: 'gu', label: 'ગુજરાતી', flag: '🇮🇳' },
+  { code: 'bn', label: 'বাংলা', flag: '🇮🇳' },
+]
+
+function LanguageSelector() {
+  const [open, setOpen] = useState(false)
+  const [selected, setSelected] = useState('en')
+  const ref = useRef(null)
+
+  useEffect(() => {
+    function handleClickOutside(e) {
+      if (ref.current && !ref.current.contains(e.target)) setOpen(false)
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [])
+
+  const triggerTranslate = (langCode) => {
+    setSelected(langCode)
+    setOpen(false)
+
+    if (langCode === 'en') {
+      // Reset to original — remove the googtrans cookie and reload
+      document.cookie = 'googtrans=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;'
+      document.cookie = 'googtrans=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/; domain=' + window.location.hostname + ';'
+      // Try to use the Google Translate API to restore original
+      const frame = document.querySelector('.goog-te-banner-frame')
+      if (frame) {
+        const btn = frame.contentDocument?.querySelector('.goog-close-link')
+        if (btn) btn.click()
+      }
+      // Fallback: set cookie and reload
+      window.location.reload()
+      return
+    }
+
+    // Set the googtrans cookie to trigger translation
+    document.cookie = `googtrans=/en/${langCode}; path=/;`
+    document.cookie = `googtrans=/en/${langCode}; path=/; domain=${window.location.hostname};`
+
+    // If the Google Translate widget has initialized, programmatically select
+    const selectEl = document.querySelector('#google_translate_element select')
+    if (selectEl) {
+      selectEl.value = langCode
+      selectEl.dispatchEvent(new Event('change'))
+    } else {
+      // Widget hasn't loaded yet — reload page and the cookie will trigger it
+      window.location.reload()
+    }
+  }
+
+  const current = LANGUAGES.find(l => l.code === selected) || LANGUAGES[0]
+
+  return (
+    <div ref={ref} style={{ position: 'relative', zIndex: 1000 }}>
+      <button
+        onClick={() => setOpen(!open)}
+        style={{
+          display: 'flex', alignItems: 'center', gap: '6px',
+          padding: '6px 12px', borderRadius: '20px',
+          background: open ? '#e0e7ff' : '#f1f5f9',
+          border: '1px solid ' + (open ? '#818cf8' : '#e2e8f0'),
+          cursor: 'pointer', fontWeight: '600', fontSize: '12px',
+          color: '#334155', transition: 'all 0.2s',
+          whiteSpace: 'nowrap'
+        }}
+        title="Change language"
+      >
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <circle cx="12" cy="12" r="10"/>
+          <line x1="2" y1="12" x2="22" y2="12"/>
+          <path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/>
+        </svg>
+        <span>{current.flag} {current.label}</span>
+        <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+          <path d={open ? 'M2 6.5L5 3.5L8 6.5' : 'M2 3.5L5 6.5L8 3.5'} />
+        </svg>
+      </button>
+
+      {open && (
+        <div style={{
+          position: 'absolute', top: 'calc(100% + 6px)', right: 0,
+          background: '#ffffff', borderRadius: '12px',
+          border: '1px solid #e2e8f0',
+          boxShadow: '0 12px 40px rgba(0,0,0,0.12), 0 4px 12px rgba(0,0,0,0.06)',
+          padding: '6px', minWidth: '180px',
+          animation: 'fadeIn 0.15s ease-out'
+        }}>
+          {LANGUAGES.map(lang => (
+            <button
+              key={lang.code}
+              onClick={() => triggerTranslate(lang.code)}
+              style={{
+                display: 'flex', alignItems: 'center', gap: '10px',
+                width: '100%', padding: '8px 12px', border: 'none',
+                borderRadius: '8px', cursor: 'pointer',
+                fontSize: '13px', fontWeight: selected === lang.code ? '700' : '500',
+                color: selected === lang.code ? '#3b82f6' : '#334155',
+                background: selected === lang.code ? '#eff6ff' : 'transparent',
+                transition: 'all 0.15s', textAlign: 'left'
+              }}
+              onMouseEnter={e => { if (selected !== lang.code) e.currentTarget.style.background = '#f8fafc' }}
+              onMouseLeave={e => { if (selected !== lang.code) e.currentTarget.style.background = 'transparent' }}
+            >
+              <span style={{ fontSize: '16px' }}>{lang.flag}</span>
+              <span>{lang.label}</span>
+              {selected === lang.code && (
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" style={{ marginLeft: 'auto' }}>
+                  <polyline points="20 6 9 17 4 12"/>
+                </svg>
+              )}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 /* ── Header ────────────────────────────────────────────────────────────── */
 
 function Header({ tab, setTab, cityAqi, alertCount, weather, onSelectPlace, wards, onSelectWard }) {
@@ -661,8 +783,10 @@ function Header({ tab, setTab, cityAqi, alertCount, weather, onSelectPlace, ward
         {/* Search Input Box */}
         <HeaderSearch onSelectPlace={onSelectPlace} wards={wards} onSelectWard={onSelectWard} />
 
-        {/* Google Translate Dropdown Widget */}
-        <div id="google_translate_element" style={{ display: 'inline-block' }}></div>
+        {/* Language Selector (drives Google Translate) */}
+        <LanguageSelector />
+        {/* Hidden Google Translate container — our selector drives it programmatically */}
+        <div id="google_translate_element" style={{ position: 'absolute', top: '-9999px', left: '-9999px', opacity: 0 }}></div>
 
         {/* Segmented Navigation Control */}
         <div style={{ display: 'flex', background: '#f1f5f9', padding: '3px', borderRadius: '24px', border: '1px solid #e2e8f0' }}>
@@ -3576,6 +3700,11 @@ function PersonalAlertSubscriptionPopup({
         setSubscriptionActive(true);
         onChangeProfile(personalProfile);
         await onLoadAdvisory(selectedWard.id, lang, personalProfile);
+        // Auto-reset after 4 seconds so user can subscribe another email
+        setTimeout(() => {
+          setSubscriptionActive(false);
+          setEmailAddress('');
+        }, 4000);
       }
     } catch (err) {
       console.error("Subscription failed:", err);

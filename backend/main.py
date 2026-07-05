@@ -19,7 +19,7 @@ load_dotenv()
 
 import sqlite3
 import uuid
-from typing import Optional
+from typing import Optional, Dict, Tuple
 from datetime import datetime, timezone
 import httpx
 from fastapi import FastAPI, Query, HTTPException, Request
@@ -67,6 +67,172 @@ def _get_resend_key() -> Optional[str]:
         None
     )
 
+
+def _aqi_category_style(aqi: float) -> Dict[str, str]:
+    """Map an AQI value to its category label + brand colors for the alert email.
+    Thresholds match the ones already used elsewhere in send_aqi_alerts/get_alerts."""
+    if aqi > 300:
+        return {"label": "Severe", "color": "#7f1d1d", "bg": "#fef2f2", "dot": "\U0001F7E4"}
+    if aqi > 200:
+        return {"label": "Very Poor", "color": "#b91c1c", "bg": "#fef2f2", "dot": "\U0001F534"}
+    if aqi > 150:
+        return {"label": "Poor", "color": "#ea580c", "bg": "#fff7ed", "dot": "\U0001F7E0"}
+    if aqi > 100:
+        return {"label": "Moderate", "color": "#ca8a04", "bg": "#fefce8", "dot": "\U0001F7E1"}
+    if aqi > 50:
+        return {"label": "Satisfactory", "color": "#65a30d", "bg": "#f7fee7", "dot": "\U0001F7E2"}
+    return {"label": "Good", "color": "#16a34a", "bg": "#f0fdf4", "dot": "\U0001F7E2"}
+
+
+PROFILE_LABELS = {
+    "asthma": "Asthma / Respiratory Condition",
+    "sensitive": "Sensitive Group",
+    "elderly": "Elderly",
+    "outdoor_worker": "Outdoor Worker",
+    "healthy_adult": "Healthy Adult",
+}
+
+# 3 short, profile-specific tips per subscription type — kept deliberately brief
+# (an email is skimmed, not read) and consistent with the guidance style already
+# used in agents.py's EnforcementAgent._recommend().
+PROFILE_GUIDANCE = {
+    "asthma": [
+        "Keep your rescue inhaler within reach today.",
+        "Avoid outdoor activity entirely — stay indoors with windows closed.",
+        "Run an air purifier if available; seek medical help if you feel breathless.",
+    ],
+    "sensitive": [
+        "Avoid prolonged or heavy outdoor exertion.",
+        "Wear an N95 mask if you must go outside.",
+        "Watch for coughing, throat irritation, or eye discomfort.",
+    ],
+    "elderly": [
+        "Limit outdoor exposure, especially early morning and evening.",
+        "Avoid busy traffic corridors and construction areas.",
+        "Stay hydrated and keep any prescribed medication accessible.",
+    ],
+    "outdoor_worker": [
+        "Wear an N95/N99 mask throughout your work hours.",
+        "Take frequent breaks indoors or in cleaner air where possible.",
+        "Report any breathing difficulty to your supervisor immediately.",
+    ],
+    "healthy_adult": [
+        "Reduce strenuous outdoor exercise, especially cardio.",
+        "Consider a mask for prolonged time outside.",
+        "Keep windows closed during peak traffic hours.",
+    ],
+}
+
+# (label, safe-limit, unit) — the safe-limit values match the exceedance
+# thresholds already used in agents.py's EnforcementAgent for consistency.
+POLLUTANT_INFO = {
+    "pm25": ("PM2.5", 60.0, "\u00b5g/m\u00b3"),
+    "pm10": ("PM10", 100.0, "\u00b5g/m\u00b3"),
+    "no2": ("NO\u2082", 40.0, "\u00b5g/m\u00b3"),
+    "so2": ("SO\u2082", 40.0, "\u00b5g/m\u00b3"),
+    "o3": ("O\u2083", 100.0, "\u00b5g/m\u00b3"),
+    "co": ("CO", 2.0, "mg/m\u00b3"),
+}
+
+
+def _build_alert_email(city_name: str, current_aqi: float, profile: str,
+                       pollutants: Dict[str, float], trend_delta: float,
+                       dashboard_url: str, unsubscribe_url: str) -> Tuple[str, str]:
+    """Build the branded, table-based (email-client-safe) alert email.
+    Returns (subject, html_body)."""
+    style = _aqi_category_style(current_aqi)
+    profile_label = PROFILE_LABELS.get(profile, profile.replace("_", " ").title())
+    guidance = PROFILE_GUIDANCE.get(profile, PROFILE_GUIDANCE["healthy_adult"])
+
+    if trend_delta > 10:
+        trend_html = '<span style="color:#b91c1c;">&#9650; rising</span>'
+    elif trend_delta < -10:
+        trend_html = '<span style="color:#16a34a;">&#9660; falling</span>'
+    else:
+        trend_html = '<span style="color:#64748b;">&#8212; steady</span>'
+
+    pollutant_cells = []
+    for key, (label, safe_limit, unit) in POLLUTANT_INFO.items():
+        val = pollutants.get(key)
+        if val is None:
+            continue
+        exceeded = val > safe_limit
+        val_color = "#b91c1c" if exceeded else "#1e293b"
+        pollutant_cells.append(f"""
+        <td width="33%" style="padding:10px; text-align:center; border:1px solid #e2e8f0; border-radius:6px;">
+          <div style="font-size:12px; color:#64748b; font-weight:600;">{label}</div>
+          <div style="font-size:18px; font-weight:700; color:{val_color};">{val:.1f}</div>
+          <div style="font-size:11px; color:#94a3b8;">{unit} &middot; safe &lt; {safe_limit:g}</div>
+        </td>""")
+    # Wrap into rows of 3 (33% width each) instead of one overflowing row —
+    # up to 6 pollutants means up to 2 rows.
+    pollutant_rows = "".join(
+        f"<tr>{''.join(pollutant_cells[i:i+3])}</tr>"
+        for i in range(0, len(pollutant_cells), 3)
+    )
+
+    guidance_html = "".join(
+        f'<tr><td style="padding:6px 0; font-size:14px; color:#334155;">&#8226;&nbsp; {tip}</td></tr>'
+        for tip in guidance
+    )
+
+    subject = f"{style['dot']} AQI Alert: {city_name} is {style['label']} ({current_aqi:.0f})"
+
+    html = f"""
+    <div style="background:#f1f5f9; padding:24px 12px; font-family:Arial,Helvetica,sans-serif;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px; margin:0 auto; background:#ffffff; border-radius:12px; overflow:hidden; border:1px solid #e2e8f0;">
+        <tr>
+          <td style="padding:20px 24px; background:#1e293b;">
+            <span style="font-size:18px; font-weight:800; color:#ffffff;">AQIfy</span>
+            <span style="font-size:12px; color:#94a3b8; margin-left:8px;">Personal Air Quality Alert</span>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:0;">
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:{style['bg']};">
+              <tr>
+                <td style="padding:28px 24px; text-align:center;">
+                  <div style="font-size:13px; color:#64748b; font-weight:600; text-transform:uppercase; letter-spacing:0.05em;">{city_name}</div>
+                  <div style="font-size:48px; font-weight:800; color:{style['color']}; line-height:1.1; margin-top:4px;">{current_aqi:.0f}</div>
+                  <div style="font-size:16px; font-weight:700; color:{style['color']};">{style['dot']} {style['label']}</div>
+                  <div style="font-size:12px; color:#64748b; margin-top:4px;">Trend since last alert: {trend_html}</div>
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:22px 24px 4px;">
+            <div style="font-size:13px; font-weight:700; color:#1e293b; text-transform:uppercase; letter-spacing:0.03em; margin-bottom:10px;">Pollutant breakdown</div>
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="6">{pollutant_rows}</table>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:20px 24px 4px;">
+            <div style="font-size:13px; font-weight:700; color:#1e293b; text-transform:uppercase; letter-spacing:0.03em; margin-bottom:8px;">
+              What this means for you &mdash; {profile_label}
+            </div>
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0">{guidance_html}</table>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:24px; text-align:center;">
+            <a href="{dashboard_url}" style="display:inline-block; background:#3b82f6; color:#ffffff; padding:12px 28px; border-radius:8px; text-decoration:none; font-weight:700; font-size:14px;">View Live Dashboard</a>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:16px 24px; border-top:1px solid #e2e8f0; text-align:center;">
+            <div style="font-size:11px; color:#94a3b8;">
+              You're receiving this because you subscribed to alerts for {city_name} ({profile_label}).<br/>
+              <a href="{unsubscribe_url}" style="color:#94a3b8; text-decoration:underline;">Unsubscribe from these alerts</a>
+            </div>
+          </td>
+        </tr>
+      </table>
+    </div>
+    """
+    return subject, html
+
 # ── Application Setup ─────────────────────────────────────────────────────────
 
 app = FastAPI(
@@ -104,76 +270,49 @@ async def startup_event():
     print(f"[STARTUP] RESEND_API_KEY from .env file:  {'SET (len={})'.format(len(resend_from_env)) if resend_from_env else 'NOT SET'}")
     print(f"[STARTUP] All env keys containing 'RESEND': {[k for k in os.environ if 'RESEND' in k.upper()]}")
     print(f"[STARTUP] All env keys containing 'API':    {[k for k in os.environ if 'API' in k.upper()]}")
-    # Pre-train live cities in the background, in two tiers.
-    #
-    # Nothing about page load actually depends on this finishing — index.html
-    # is served unconditionally from static files, /api/state doesn't touch
-    # the forecaster at all, and /api/forecast already returns a real-data
-    # fallback instantly for any city without a trained model yet (see
-    # AQIForecaster.generate_ml_forecast). So this used to be safe to make as
-    # slow as it wanted... in theory. In practice, training all 36 cities
-    # eagerly at startup — even bounded to 3 concurrent — kept the CPU-bound
-    # GBM fitting busy for 15-20 minutes, and because that fitting ran on
-    # worker *threads* sharing this process's one GIL, heavy concurrent
-    # fitting could still starve the event loop enough that a visitor's very
-    # first page load stalled noticeably. Two changes fix that:
-    #   1. forecaster.py now runs the CPU-bound fit in a separate PROCESS
-    #      (ProcessPoolExecutor), which has its own GIL and truly cannot
-    #      block this process's event loop, no matter how many cities train
-    #      at once.
-    #   2. Startup itself now only eagerly trains a small PRIORITY_CITIES
-    #      set — enough that the most commonly viewed cities have real ML
-    #      forecasts within the first training pass — and trains everything
-    #      else afterward, at lower concurrency, without the rest of the
-    #      app waiting on it in any way. Any city outside PRIORITY_CITIES
-    #      still gets its own model lazily the first time someone actually
-    #      requests its forecast, serving the accurate real-data fallback
-    #      in the meantime.
-    from simulation import LIVE_CITIES, DEFAULT_CITY as _DEFAULT_CITY
+    # Pre-train ALL live cities in the background
+    from simulation import LIVE_CITIES
     PARENT_CITIES = [k for k in LIVE_CITIES if "_" not in k]
-    _priority_env = os.environ.get("PRIORITY_CITIES", "").strip()
-    if _priority_env:
-        PRIORITY_CITIES = [c.strip() for c in _priority_env.split(",") if c.strip() in PARENT_CITIES]
-    else:
-        # Default city plus a handful of the largest/most-visited metros.
-        PRIORITY_CITIES = [c for c in [
-            _DEFAULT_CITY, "delhi", "mumbai", "bengaluru", "hyderabad", "kolkata", "chennai",
-        ] if c in PARENT_CITIES]
-    REMAINING_CITIES = [c for c in PARENT_CITIES if c not in PRIORITY_CITIES]
 
-    async def train_priority_then_rest():
+    async def train_all():
         import logging
         log = logging.getLogger("main")
+        # Train cities concurrently (bounded pool) instead of one-at-a-time with a
+        # hardcoded 5s cooldown between each. That old loop was the reason startup
+        # training crawled at 5+ seconds per city and, combined with the lock that
+        # used to span the whole fetch+train pipeline in forecaster.py, could stall
+        # unrelated requests too. forecaster.train_all_cities() already fetches AQ
+        # + weather concurrently per city, retries 429s with capped backoff, and
+        # runs the CPU-bound model fitting in a worker thread — so a handful of
+        # cities training at once is safe and no longer blocks the event loop.
+        # TRAIN_CONCURRENCY is tunable via env if you ever see 429s/timeouts in
+        # practice. Lowered from 6 to 3: the historical-data fetch hits Open-
+        # Meteo's dedicated historical-forecast host with a 14-day range per
+        # city, and 6-way concurrent load against it was implicated in the
+        # ConnectTimeout failures seen in production.
         concurrency = int(os.environ.get("TRAIN_CONCURRENCY", "3"))
         t0 = datetime.now()
         try:
-            await forecaster.train_all_cities(city_keys=PRIORITY_CITIES, concurrency=concurrency)
+            await forecaster.train_all_cities(city_keys=PARENT_CITIES, concurrency=concurrency)
         except Exception as e:
-            log.error(f"Priority-city training failed: {type(e).__name__}: {e or 'no details'}")
-        log.info(f"Priority training for {len(PRIORITY_CITIES)} cities finished in "
-                 f"{(datetime.now() - t0).total_seconds():.1f}s ({concurrency} concurrent). "
-                 f"App is fully servable now — remaining {len(REMAINING_CITIES)} cities train in the background.")
-
-        if REMAINING_CITIES:
-            t1 = datetime.now()
-            try:
-                await forecaster.train_all_cities(city_keys=REMAINING_CITIES, concurrency=concurrency)
-            except Exception as e:
-                log.error(f"Background training batch failed: {type(e).__name__}: {e or 'no details'}")
-            log.info(f"Background training for {len(REMAINING_CITIES)} remaining cities finished in "
-                     f"{(datetime.now() - t1).total_seconds():.1f}s ({concurrency} concurrent).")
-
-    asyncio.create_task(train_priority_then_rest())
+            log.error(f"Startup training batch failed: {type(e).__name__}: {e or 'no details'}")
+        log.info(f"Startup training for {len(PARENT_CITIES)} cities finished in "
+                 f"{(datetime.now() - t0).total_seconds():.1f}s ({concurrency} concurrent).")
+    asyncio.create_task(train_all())
 
     # Start the background alert loop
     async def alert_loop():
         # Check environment variable or load default (3600 seconds)
         interval = int(os.environ.get("ALERT_LOOP_INTERVAL", "3600"))
+        # No Request object exists in a background task, so the public URL used
+        # for the "View Live Dashboard" button and unsubscribe link in alert
+        # emails has to come from an env var instead of request.base_url.
+        public_base_url = os.environ.get("PUBLIC_BASE_URL", "http://localhost:7860").rstrip("/")
         print(f"Starting alert background loop with interval {interval}s")
         await asyncio.sleep(10)  # Wait for startup to stabilize
         while True:
             try:
-                await send_aqi_alerts()
+                await send_aqi_alerts(base_url=public_base_url)
             except Exception as e:
                 print("Error in alert loop:", e)
             await asyncio.sleep(interval)
@@ -426,24 +565,9 @@ async def get_forecast(
     if not cities_to_process:
         return raw_forecast
         
-    # Generate ML forecasts with BOUNDED concurrency instead of all at once.
-    # For city="all" this list is every parent city (~36) — asyncio.gather
-    # over all of them unbounded fired ~36 simultaneous forecast-weather +
-    # forecast-AQI calls at Open-Meteo for a single page load, on top of
-    # whatever background training was also in flight. That burst is what
-    # produced the wall of "Timeout fetching .../v1/forecast" errors: it's
-    # not that Open-Meteo is unreliable, it's that one request to this
-    # endpoint was generating dozens of concurrent outbound calls. A small
-    # semaphore keeps this endpoint's own fan-out sane regardless of how
-    # many cities exist. FORECAST_CONCURRENCY is tunable via env.
-    _forecast_semaphore = asyncio.Semaphore(int(os.environ.get("FORECAST_CONCURRENCY", "6")))
-
-    async def _bounded_ml_forecast(c: str):
-        async with _forecast_semaphore:
-            return await forecaster.generate_ml_forecast(c, hours)
-
+    # Generate ML forecasts in parallel
     ml_forecasts = {}
-    tasks = {c: _bounded_ml_forecast(c) for c in cities_to_process}
+    tasks = {c: forecaster.generate_ml_forecast(c, hours) for c in cities_to_process}
     results = await asyncio.gather(*tasks.values(), return_exceptions=True)
     
     for c, res in zip(tasks.keys(), results):
@@ -855,7 +979,7 @@ async def subscribe_advisory(
 
 
 @app.get("/api/advisory/confirm")
-async def confirm_advisory(token: str):
+async def confirm_advisory(request: Request, token: str):
     """Verify double opt-in email subscription and activate it."""
     db_path = os.path.join(os.path.dirname(__file__), "subscriptions.db")
     conn = sqlite3.connect(db_path)
@@ -871,11 +995,38 @@ async def confirm_advisory(token: str):
     conn.commit()
     conn.close()
 
+    # Fire an immediate alert check so the user doesn't wait up to 1 hour
+    try:
+        public_base_url = os.environ.get("PUBLIC_BASE_URL", str(request.base_url).rstrip("/"))
+        asyncio.create_task(send_aqi_alerts(base_url=public_base_url))
+    except Exception:
+        pass  # Best-effort; the periodic loop will catch it anyway
+
     # Redirect user back to frontend with a success flag
     return RedirectResponse("/?alert=confirmed")
 
 
-async def send_aqi_alerts():
+@app.get("/api/advisory/unsubscribe")
+async def unsubscribe_advisory(token: str):
+    """Remove a subscription via the unsubscribe link included in alert emails."""
+    db_path = os.path.join(os.path.dirname(__file__), "subscriptions.db")
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT id FROM aqi_subscriptions WHERE confirm_token = ?", (token,))
+    row = cursor.fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Invalid or expired unsubscribe link.")
+
+    cursor.execute("DELETE FROM aqi_subscriptions WHERE confirm_token = ?", (token,))
+    conn.commit()
+    conn.close()
+
+    return RedirectResponse("/?alert=unsubscribed")
+
+
+async def send_aqi_alerts(base_url: str = "http://localhost:7860"):
     """Query confirmed subscriptions, fetch current AQI, and send alert emails if threshold exceeded."""
     db_path = os.path.join(os.path.dirname(__file__), "subscriptions.db")
     conn = sqlite3.connect(db_path)
@@ -897,9 +1048,11 @@ async def send_aqi_alerts():
         "healthy_adult": 150.0
     }
 
-    # Fetch latest simulation snapshot to get current AQI for each ward
+    # Fetch latest simulation snapshot to get current AQI + full pollutant
+    # breakdown for each ward (previously only "aqi" was kept, which is why
+    # the old template couldn't show a pollutant breakdown at all).
     readings = await sim.generate_readings("all")
-    ward_aqi_map = {r["ward_id"]: r["aqi"] for r in readings}
+    ward_reading_map = {r["ward_id"]: r for r in readings}
 
     for row in rows:
         ward_id = row["ward_id"]
@@ -907,24 +1060,29 @@ async def send_aqi_alerts():
         email = row["email"]
         last_alerted = row["last_alerted_aqi"]
 
-        current_aqi = ward_aqi_map.get(ward_id, 80.0)
+        reading = ward_reading_map.get(ward_id)
+        current_aqi = reading["aqi"] if reading else 80.0
+        pollutants = reading.get("pollutants", {}) if reading else {}
         threshold = THRESHOLDS.get(profile, 100.0)
 
-        # Alert if threshold is exceeded AND there is significant change (> 15.0 AQI difference)
-        if current_aqi > threshold and abs(current_aqi - last_alerted) > 15.0:
+        # Alert if threshold is reached/exceeded.
+        # For brand-new subscriptions (last_alerted == 0) skip the delta guard
+        # so the very first alert fires immediately when AQI >= threshold.
+        is_first_alert = (last_alerted is None or last_alerted == 0.0)
+        delta_ok = is_first_alert or abs(current_aqi - last_alerted) > 10.0
+        if current_aqi >= threshold and delta_ok:
             city_name = CITIES.get(ward_id, {}).get("name", ward_id.capitalize())
-            category = "Severe" if current_aqi > 300 else "Very Poor" if current_aqi > 200 else "Poor" if current_aqi > 150 else "Moderate" if current_aqi > 100 else "Satisfactory" if current_aqi > 50 else "Good"
-            
-            subject = f"⚠️ AQI Alert: {city_name} is {category} ({current_aqi:.1f})"
-            html_body = f"""
-                <div style="font-family: Arial, sans-serif; padding: 20px; color: #1e293b; border: 1px solid #e2e8f0; border-radius: 8px; max-width: 600px;">
-                    <h2 style="color: #ef4444; margin-top: 0;">⚠️ Air Quality Warning</h2>
-                    <p>The current air quality index in <strong>{city_name}</strong> has reached <strong>{current_aqi:.1f} ({category})</strong>.</p>
-                    <p>This exceeds your custom health profile safety threshold (<strong>{profile.replace('_', ' ').capitalize()}</strong> threshold: {threshold}).</p>
-                    <hr style="border: 0; border-top: 1px solid #e2e8f0; margin: 20px 0;" />
-                    <p style="font-size: 13px; color: #64748b; margin-bottom: 0;">Please minimize prolonged outdoor exertion and take necessary health precautions.</p>
-                </div>
-            """
+            trend_delta = current_aqi - last_alerted if last_alerted else 0.0
+
+            subject, html_body = _build_alert_email(
+                city_name=city_name,
+                current_aqi=current_aqi,
+                profile=profile,
+                pollutants=pollutants,
+                trend_delta=trend_delta,
+                dashboard_url=base_url,
+                unsubscribe_url=f"{base_url}/api/advisory/unsubscribe?token={row['confirm_token']}",
+            )
 
             resend_key = _get_resend_key()
             from_email = os.environ.get("RESEND_FROM_EMAIL") or "AQI Alerts <onboarding@resend.dev>"
@@ -985,18 +1143,6 @@ async def get_alerts(city: str = Query(default=DEFAULT_CITY)):
                 })
     alerts.sort(key=lambda x: -x["aqi"])
     return {"alerts": alerts, "count": len(alerts)}
-
-
-@app.get("/api/training-status")
-def get_training_status():
-    """Lightweight status the frontend can poll on load: which cities already
-    have a trained ML model vs. are still being trained in the background
-    (and therefore serving the real-data fallback forecast). Never blocks —
-    reads an in-memory dict, no locks, no network calls.
-    """
-    from simulation import LIVE_CITIES
-    parent_cities = [k for k in LIVE_CITIES if "_" not in k]
-    return forecaster.get_training_status(parent_cities)
 
 
 @app.get("/api/wards")
