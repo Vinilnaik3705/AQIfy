@@ -4,14 +4,12 @@
 
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;850&family=JetBrains+Mono:wght@400;600&display=swap');
 
-/* Hide Google Translate's default banner bar and branding — we use a custom dropdown */
-.goog-te-banner-frame, .goog-te-balloon-frame, #goog-gt-tt,
-.goog-te-gadget, .goog-te-combo, .goog-logo-link,
-.VIpgJd-ZVi9od-ORHb-OEVmcd, .VIpgJd-ZVi9od-l4eHX-hSRGPd {
-  display: none !important;
-}
+/* Hide Google Translate's banner bar — but keep the widget functional for programmatic use */
+.goog-te-banner-frame { display: none !important; }
+#goog-gt-tt, .goog-te-balloon-frame { display: none !important; }
 body { top: 0 !important; }
-.skiptranslate { display: none !important; }
+/* Keep the widget container alive but visually collapsed (NOT display:none which kills it) */
+.skiptranslate { height: 0 !important; overflow: hidden !important; }
 
 :root {
   --bg-base:        #ffffff;

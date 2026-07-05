@@ -635,9 +635,11 @@ const LANGUAGES = [
 
 function LanguageSelector() {
   const [open, setOpen] = useState(false)
-  const [selected, setSelected] = useState('en')
+  const [selected, setSelected] = useState(() => localStorage.getItem('aqify_lang') || 'en')
   const ref = useRef(null)
+  const [gtReady, setGtReady] = useState(false)
 
+  // Close dropdown on outside click
   useEffect(() => {
     function handleClickOutside(e) {
       if (ref.current && !ref.current.contains(e.target)) setOpen(false)
@@ -646,37 +648,53 @@ function LanguageSelector() {
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [])
 
+  // Poll until Google Translate's <select> element appears in the DOM
+  useEffect(() => {
+    let attempts = 0
+    const timer = setInterval(() => {
+      const sel = document.querySelector('.goog-te-combo')
+      if (sel) {
+        setGtReady(true)
+        clearInterval(timer)
+        // Auto-apply saved language on mount
+        const saved = localStorage.getItem('aqify_lang')
+        if (saved && saved !== 'en') {
+          sel.value = saved
+          sel.dispatchEvent(new Event('change'))
+        }
+      }
+      if (++attempts > 60) clearInterval(timer) // stop after ~6s
+    }, 100)
+    return () => clearInterval(timer)
+  }, [])
+
   const triggerTranslate = (langCode) => {
     setSelected(langCode)
     setOpen(false)
+    localStorage.setItem('aqify_lang', langCode)
+
+    const gtSelect = document.querySelector('.goog-te-combo')
 
     if (langCode === 'en') {
-      // Reset to original — remove the googtrans cookie and reload
-      document.cookie = 'googtrans=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;'
-      document.cookie = 'googtrans=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/; domain=' + window.location.hostname + ';'
-      // Try to use the Google Translate API to restore original
-      const frame = document.querySelector('.goog-te-banner-frame')
-      if (frame) {
-        const btn = frame.contentDocument?.querySelector('.goog-close-link')
-        if (btn) btn.click()
+      // Restore original page — Google Translate exposes a restore function
+      if (gtSelect) {
+        gtSelect.value = ''
+        gtSelect.dispatchEvent(new Event('change'))
       }
-      // Fallback: set cookie and reload
-      window.location.reload()
+      // Also try the iframe-based restore
+      try {
+        const frame = document.querySelector('.goog-te-banner-frame')
+        if (frame && frame.contentDocument) {
+          const btn = frame.contentDocument.querySelector('.goog-close-link')
+          if (btn) btn.click()
+        }
+      } catch (_) { /* cross-origin */ }
       return
     }
 
-    // Set the googtrans cookie to trigger translation
-    document.cookie = `googtrans=/en/${langCode}; path=/;`
-    document.cookie = `googtrans=/en/${langCode}; path=/; domain=${window.location.hostname};`
-
-    // If the Google Translate widget has initialized, programmatically select
-    const selectEl = document.querySelector('#google_translate_element select')
-    if (selectEl) {
-      selectEl.value = langCode
-      selectEl.dispatchEvent(new Event('change'))
-    } else {
-      // Widget hasn't loaded yet — reload page and the cookie will trigger it
-      window.location.reload()
+    if (gtSelect) {
+      gtSelect.value = langCode
+      gtSelect.dispatchEvent(new Event('change'))
     }
   }
 
@@ -742,6 +760,11 @@ function LanguageSelector() {
               )}
             </button>
           ))}
+          {!gtReady && (
+            <div style={{ padding: '6px 12px', fontSize: '11px', color: '#94a3b8', textAlign: 'center' }}>
+              Translation engine loading…
+            </div>
+          )}
         </div>
       )}
     </div>
