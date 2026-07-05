@@ -165,9 +165,21 @@ def _build_sensors(wards: List[Dict]) -> List[Dict[str, Any]]:
     return sensors
 
 def _calculate_sub_index(val: float, breakpoints: List[tuple]) -> float:
+    """Map a pollutant concentration to its AQI sub-index.
+
+    The breakpoint tables use continuous ranges (no gaps). For any value
+    within the defined concentration span, the first range whose upper
+    bound covers the value is selected. Values above the highest range
+    are capped at the maximum AQI (500).
+    """
+    if val <= 0:
+        return 0.0
     for (b_low, b_high, i_low, i_high) in breakpoints:
-        if b_low <= val <= b_high:
-            return i_low + (val - b_low) * (i_high - i_low) / (b_high - b_low)
+        if val <= b_high:
+            # Clamp val to b_low in case of minor float undershoot
+            clamped = max(val, b_low)
+            return i_low + (clamped - b_low) * (i_high - i_low) / max(0.001, b_high - b_low)
+    # Above all defined ranges — genuinely extreme concentration
     if breakpoints:
         return breakpoints[-1][3]
     return 0.0
@@ -218,59 +230,64 @@ def calculate_indian_aqi(pm25: float, pm10: float, no2: float, so2: float, co: f
       no2, so2, o3 → µg/m³
       co → mg/m³
     """
-    # Official CPCB NAQI breakpoints (concentration ranges map to AQI sub-index ranges)
+    # Official CPCB NAQI breakpoints — made CONTINUOUS (no gaps between ranges).
+    # The original CPCB spec uses integer boundaries with 1-unit gaps (e.g.
+    # PM2.5 Good=0-30, Satisfactory=31-60). Those gaps cause any float value
+    # like 30.5 to fall through _calculate_sub_index and return 500 — which
+    # is exactly why random cities were showing AQI=500 whenever their
+    # calibrated concentrations landed on a fractional boundary value.
     # Format: (conc_lo, conc_hi, aqi_lo, aqi_hi)
     pm25_bp = [
-        (0, 30, 0, 50),       # Good
-        (31, 60, 51, 100),     # Satisfactory
-        (61, 90, 101, 200),    # Moderate
-        (91, 120, 201, 300),   # Poor
-        (121, 250, 301, 400),  # Very Poor
-        (250, 500, 401, 500),  # Severe
+        (0, 30, 0, 50),        # Good
+        (30, 60, 50, 100),     # Satisfactory
+        (60, 90, 100, 200),    # Moderate
+        (90, 120, 200, 300),   # Poor
+        (120, 250, 300, 400),  # Very Poor
+        (250, 500, 400, 500),  # Severe
     ]
     pm10_bp = [
         (0, 50, 0, 50),
-        (51, 100, 51, 100),
-        (101, 250, 101, 200),
-        (251, 350, 201, 300),
-        (351, 430, 301, 400),
-        (430, 600, 401, 500),
+        (50, 100, 50, 100),
+        (100, 250, 100, 200),
+        (250, 350, 200, 300),
+        (350, 430, 300, 400),
+        (430, 600, 400, 500),
     ]
     # NO2 in µg/m³ (no conversion needed for Indian standard)
     no2_bp = [
         (0, 40, 0, 50),
-        (41, 80, 51, 100),
-        (81, 180, 101, 200),
-        (181, 280, 201, 300),
-        (281, 400, 301, 400),
-        (400, 800, 401, 500),
+        (40, 80, 50, 100),
+        (80, 180, 100, 200),
+        (180, 280, 200, 300),
+        (280, 400, 300, 400),
+        (400, 800, 400, 500),
     ]
     # SO2 in µg/m³
     so2_bp = [
         (0, 40, 0, 50),
-        (41, 80, 51, 100),
-        (81, 380, 101, 200),
-        (381, 800, 201, 300),
-        (801, 1600, 301, 400),
-        (1600, 3200, 401, 500),
+        (40, 80, 50, 100),
+        (80, 380, 100, 200),
+        (380, 800, 200, 300),
+        (800, 1600, 300, 400),
+        (1600, 3200, 400, 500),
     ]
     # CO in mg/m³
     co_bp = [
         (0, 1.0, 0, 50),
-        (1.1, 2.0, 51, 100),
-        (2.1, 10, 101, 200),
-        (10, 17, 201, 300),
-        (17, 34, 301, 400),
-        (34, 70, 401, 500),
+        (1.0, 2.0, 50, 100),
+        (2.0, 10, 100, 200),
+        (10, 17, 200, 300),
+        (17, 34, 300, 400),
+        (34, 70, 400, 500),
     ]
     # O3 in µg/m³
     o3_bp = [
         (0, 50, 0, 50),
-        (51, 100, 51, 100),
-        (101, 168, 101, 200),
-        (169, 208, 201, 300),
-        (209, 748, 301, 400),
-        (748, 1500, 401, 500),
+        (50, 100, 50, 100),
+        (100, 168, 100, 200),
+        (168, 208, 200, 300),
+        (208, 748, 300, 400),
+        (748, 1500, 400, 500),
     ]
 
     indices = []
