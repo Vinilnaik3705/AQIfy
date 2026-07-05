@@ -113,21 +113,28 @@ body{
 }
 .nav-pill {
   font-size: 14px;
-  font-weight: 500;
-  color: #334155;
+  font-weight: 600;
+  color: #475569;
   background: transparent;
   border: none;
   cursor: pointer;
-  padding: 6px 0;
-  transition: var(--ease);
+  padding: 8px 16px;
+  border-radius: 20px;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
   position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 .nav-pill:hover {
   color: #e11d48;
+  background: rgba(225, 29, 72, 0.05);
 }
 .nav-pill.active {
-  color: #e11d48;
+  color: #ffffff;
+  background: #e11d48;
   font-weight: 700;
+  box-shadow: 0 4px 12px rgba(225, 29, 72, 0.25);
 }
 
 .header-right {
@@ -239,13 +246,20 @@ body{
 /* IQAir Metric Highlight Card */
 .iqair-aqi-card {
   border-radius: var(--r-md);
-  padding: 16px;
+  padding: 18px;
   color: #0f172a;
   display: flex;
   flex-direction: column;
   gap: 12px;
   box-shadow: var(--shadow);
   border: 1px solid rgba(0, 0, 0, 0.05);
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  background: #ffffff;
+}
+.iqair-aqi-card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 12px 24px -10px rgba(15, 23, 42, 0.15), 0 4px 12px -5px rgba(15, 23, 42, 0.05);
+  border-color: rgba(225, 29, 72, 0.2);
 }
 .aqi-card-top {
   display: flex;
@@ -324,7 +338,7 @@ body{
   font-weight: 755;
   font-size: 13px;
   cursor: pointer;
-  transition: var(--ease);
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
   text-align: center;
   text-transform: uppercase;
   letter-spacing: 0.5px;
@@ -332,6 +346,11 @@ body{
 }
 .forecast-btn-dark:hover {
   background: #0f172a;
+  transform: translateY(-2px);
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.25);
+}
+.forecast-btn-dark:active {
+  transform: translateY(0);
 }
 
 /* ── Right Column / Map Components ───────────────────────────────────────── */
@@ -551,16 +570,18 @@ body{
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 8px 10px;
+  padding: 10px 14px;
   background: #ffffff;
-  border-radius: var(--r-sm);
+  border-radius: var(--r-md);
   border: 1px solid var(--border);
   cursor: pointer;
-  transition: var(--ease);
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
 }
 .rank-list-row:hover {
-  background: #f8fafc;
-  transform: translateX(2px);
+  background: #ffffff;
+  transform: translateY(-2px) scale(1.01);
+  border-color: #cbd5e1;
+  box-shadow: 0 6px 16px -4px rgba(15, 23, 42, 0.08);
 }
 .rank-left-info {
   display: flex;
@@ -612,12 +633,18 @@ body{
   flex-direction: column;
   align-items: center;
   gap: 6px;
-  padding: 12px 8px;
+  padding: 12px 10px;
   background: #ffffff;
   border-radius: var(--r-md);
   border: 1px solid var(--border);
-  min-width: 72px;
+  min-width: 76px;
   text-align: center;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.hourly-card:hover {
+  transform: translateY(-4px);
+  border-color: #cbd5e1;
+  box-shadow: 0 6px 12px -3px rgba(15, 23, 42, 0.08);
 }
 .hourly-time {
   font-size: 11px;
@@ -653,8 +680,12 @@ body{
   background: #ffffff;
   border-radius: var(--r-md);
   border: 1px solid var(--border);
-  padding: 16px;
+  padding: 18px;
   box-shadow: var(--shadow);
+  transition: all 0.3s ease;
+}
+.daily-forecast-table-card:hover {
+  box-shadow: 0 10px 25px -5px rgba(15, 23, 42, 0.08);
 }
 .daily-forecast-title {
   font-size: 15px;
@@ -694,8 +725,12 @@ body{
   background: #ffffff;
   border-radius: var(--r-md);
   border: 1px solid var(--border);
-  padding: 16px;
+  padding: 18px;
   box-shadow: var(--shadow);
+  transition: all 0.3s ease;
+}
+.pollutants-card-detailed:hover {
+  box-shadow: 0 10px 25px -5px rgba(15, 23, 42, 0.08);
 }
 .who-comparison-warning {
   background: #fff1f2;
@@ -715,8 +750,12 @@ body{
   background: #ffffff;
   border-radius: var(--r-md);
   border: 1px solid var(--border);
-  padding: 16px;
+  padding: 18px;
   box-shadow: var(--shadow);
+  transition: all 0.3s ease;
+}
+.health-recs-card:hover {
+  box-shadow: 0 10px 25px -5px rgba(15, 23, 42, 0.08);
 }
 .health-rec-list {
   display: grid;
@@ -728,7 +767,7 @@ body{
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 10px;
+  padding: 12px;
   border-radius: var(--r-sm);
   border: 1px solid #f1f5f9;
   text-align: center;
@@ -736,6 +775,12 @@ body{
   font-weight: 600;
   color: var(--text-secondary);
   background: #f8fafc;
+  transition: all 0.25s ease;
+}
+.health-rec-item:hover {
+  background: #f1f5f9;
+  transform: translateY(-2px);
+  border-color: #cbd5e1;
 }
 .health-rec-icon {
   font-size: 20px;
@@ -1027,6 +1072,12 @@ body{
   box-shadow: 0 4px 20px rgba(15, 23, 42, 0.02);
   position: relative;
   overflow: hidden;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.telemetry-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 30px rgba(15, 23, 42, 0.06);
+  border-color: #e2e8f0;
 }
 
 .telemetry-card-title {
