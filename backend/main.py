@@ -1151,6 +1151,75 @@ def get_wards(city: str = Query(default=DEFAULT_CITY)):
     return {"wards": _city_wards(city)}
 
 
+# ── Translation Endpoint ──────────────────────────────────────────────────────
+
+# In-memory cache: (text, lang) -> translated_text — avoids repeated API calls
+_translation_cache: Dict[tuple, str] = {}
+
+@app.post("/api/translate")
+async def translate_texts(request: Request):
+    """Translate an array of text strings to a target language using deep-translator.
+    Request body: { "texts": ["Hello", "Dashboard"], "target": "hi" }
+    Response:     { "translations": ["नमस्ते", "डैशबोर्ड"] }
+    """
+    body = await request.json()
+    texts = body.get("texts", [])
+    target = body.get("target", "en")
+
+    if target == "en" or not texts:
+        return {"translations": texts}
+
+    from deep_translator import GoogleTranslator
+
+    results = [None] * len(texts)
+    to_translate = []   # (original_index, text) pairs for uncached strings
+    seen = {}           # dedup: text -> first index in to_translate
+
+    for i, text in enumerate(texts):
+        stripped = text.strip()
+        if not stripped:
+            results[i] = text
+            continue
+        cache_key = (stripped, target)
+        if cache_key in _translation_cache:
+            results[i] = _translation_cache[cache_key]
+        elif stripped in seen:
+            # Same text appears twice — we'll fill it in after translation
+            to_translate.append((i, stripped))
+        else:
+            seen[stripped] = len(to_translate)
+            to_translate.append((i, stripped))
+
+    if to_translate:
+        unique_texts = list(dict.fromkeys(t for _, t in to_translate))
+        try:
+            translator = GoogleTranslator(source='en', target=target)
+            # deep-translator's translate_batch handles up to ~5000 chars
+            # Split into chunks of 50 texts to stay safe
+            translated_map = {}
+            for chunk_start in range(0, len(unique_texts), 50):
+                chunk = unique_texts[chunk_start:chunk_start + 50]
+                translated = translator.translate_batch(chunk)
+                for orig, trans in zip(chunk, translated):
+                    translated_map[orig] = trans or orig
+                    _translation_cache[(orig, target)] = trans or orig
+        except Exception as e:
+            print(f"Translation error: {e}")
+            # Fallback: return originals
+            return {"translations": texts}
+
+        # Fill in results
+        for i, stripped in to_translate:
+            results[i] = translated_map.get(stripped, stripped)
+
+    # Fill any remaining None entries with originals
+    for i in range(len(results)):
+        if results[i] is None:
+            results[i] = texts[i]
+
+    return {"translations": results}
+
+
 @app.get("/api/aqi-details")
 async def get_aqi_details(
     lat: float,

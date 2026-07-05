@@ -619,7 +619,7 @@ function HeaderSearch({ onSelectPlace, wards = [], onSelectWard }) {
   )
 }
 
-/* ── Language Selector (Custom UI for Google Translate) ────────────────── */
+/* ── Language Selector (Backend-powered DOM translation) ───────────────── */
 
 const LANGUAGES = [
   { code: 'en', label: 'English', flag: '🇬🇧' },
@@ -633,13 +633,66 @@ const LANGUAGES = [
   { code: 'bn', label: 'বাংলা', flag: '🇮🇳' },
 ]
 
+// Module-level stores so MutationObserver callback can access them
+const _originalTexts = new Map()
+let _translationMap = {}
+let _activeLang = 'en'
+
+function _getTextNodes(root) {
+  const nodes = []
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    acceptNode(node) {
+      const t = node.textContent.trim()
+      if (!t || t.length < 2) return NodeFilter.FILTER_REJECT
+      const tag = node.parentElement?.tagName
+      if (['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEXTAREA', 'CODE', 'PRE'].includes(tag)) return NodeFilter.FILTER_REJECT
+      if (node.parentElement?.closest?.('[data-notranslate]')) return NodeFilter.FILTER_REJECT
+      return NodeFilter.FILTER_ACCEPT
+    }
+  })
+  while (walker.nextNode()) nodes.push(walker.currentNode)
+  return nodes
+}
+
+async function _translateNodes(nodes, langCode) {
+  const uniqueSet = new Set()
+  nodes.forEach(n => {
+    const orig = _originalTexts.get(n) || n.textContent
+    if (!_originalTexts.has(n)) _originalTexts.set(n, n.textContent)
+    uniqueSet.add(orig.trim())
+  })
+  const uniqueTexts = [...uniqueSet].filter(t => t.length >= 2 && !_translationMap[t])
+
+  if (uniqueTexts.length > 0) {
+    try {
+      const resp = await fetch('/api/translate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ texts: uniqueTexts, target: langCode })
+      })
+      const data = await resp.json()
+      uniqueTexts.forEach((t, i) => { _translationMap[t] = data.translations[i] })
+    } catch (err) {
+      console.error('Translation API error:', err)
+      return
+    }
+  }
+
+  nodes.forEach(n => {
+    const orig = (_originalTexts.get(n) || '').trim()
+    if (_translationMap[orig]) {
+      n.textContent = _translationMap[orig]
+    }
+  })
+}
+
 function LanguageSelector() {
   const [open, setOpen] = useState(false)
   const [selected, setSelected] = useState(() => localStorage.getItem('aqify_lang') || 'en')
+  const [translating, setTranslating] = useState(false)
   const ref = useRef(null)
-  const [gtReady, setGtReady] = useState(false)
+  const observerRef = useRef(null)
 
-  // Close dropdown on outside click
   useEffect(() => {
     function handleClickOutside(e) {
       if (ref.current && !ref.current.contains(e.target)) setOpen(false)
@@ -648,82 +701,95 @@ function LanguageSelector() {
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [])
 
-  // Poll until Google Translate's <select> element appears in the DOM
+  // MutationObserver: auto-translate new content React renders
   useEffect(() => {
-    let attempts = 0
-    const timer = setInterval(() => {
-      const sel = document.querySelector('.goog-te-combo')
-      if (sel) {
-        setGtReady(true)
-        clearInterval(timer)
-        // Auto-apply saved language on mount
-        const saved = localStorage.getItem('aqify_lang')
-        if (saved && saved !== 'en') {
-          sel.value = saved
-          sel.dispatchEvent(new Event('change'))
-        }
-      }
-      if (++attempts > 60) clearInterval(timer) // stop after ~6s
-    }, 100)
-    return () => clearInterval(timer)
+    const root = document.getElementById('root')
+    if (!root) return
+    observerRef.current = new MutationObserver(() => {
+      if (_activeLang === 'en') return
+      clearTimeout(observerRef.current._timer)
+      observerRef.current._timer = setTimeout(() => {
+        const nodes = _getTextNodes(root)
+        const untranslated = nodes.filter(n => {
+          const orig = (_originalTexts.get(n) || n.textContent).trim()
+          return _translationMap[orig] && n.textContent.trim() !== _translationMap[orig]
+        })
+        const brandNew = nodes.filter(n => !_originalTexts.has(n))
+        const all = [...untranslated, ...brandNew]
+        if (all.length > 0) _translateNodes(all, _activeLang)
+      }, 300)
+    })
+    observerRef.current.observe(root, { childList: true, subtree: true, characterData: true })
+    return () => observerRef.current?.disconnect()
   }, [])
 
-  const triggerTranslate = (langCode) => {
+  // Auto-apply saved language on first load
+  useEffect(() => {
+    const saved = localStorage.getItem('aqify_lang')
+    if (saved && saved !== 'en') {
+      const timer = setTimeout(() => translatePage(saved), 2000)
+      return () => clearTimeout(timer)
+    }
+  }, [])
+
+  const translatePage = async (langCode) => {
+    _activeLang = langCode
+    if (langCode === 'en') {
+      _originalTexts.forEach((orig, node) => {
+        try { node.textContent = orig } catch (_) {}
+      })
+      _translationMap = {}
+      return
+    }
+    setTranslating(true)
+    _translationMap = {}
+    const root = document.getElementById('root')
+    if (root) {
+      const nodes = _getTextNodes(root)
+      await _translateNodes(nodes, langCode)
+    }
+    setTranslating(false)
+  }
+
+  const handleSelect = async (langCode) => {
     setSelected(langCode)
     setOpen(false)
     localStorage.setItem('aqify_lang', langCode)
-
-    const gtSelect = document.querySelector('.goog-te-combo')
-
-    if (langCode === 'en') {
-      // Restore original page — Google Translate exposes a restore function
-      if (gtSelect) {
-        gtSelect.value = ''
-        gtSelect.dispatchEvent(new Event('change'))
-      }
-      // Also try the iframe-based restore
-      try {
-        const frame = document.querySelector('.goog-te-banner-frame')
-        if (frame && frame.contentDocument) {
-          const btn = frame.contentDocument.querySelector('.goog-close-link')
-          if (btn) btn.click()
-        }
-      } catch (_) { /* cross-origin */ }
-      return
-    }
-
-    if (gtSelect) {
-      gtSelect.value = langCode
-      gtSelect.dispatchEvent(new Event('change'))
-    }
+    await translatePage(langCode)
   }
 
   const current = LANGUAGES.find(l => l.code === selected) || LANGUAGES[0]
 
   return (
-    <div ref={ref} style={{ position: 'relative', zIndex: 1000 }}>
+    <div ref={ref} data-notranslate style={{ position: 'relative', zIndex: 1000 }}>
       <button
         onClick={() => setOpen(!open)}
         style={{
           display: 'flex', alignItems: 'center', gap: '6px',
           padding: '6px 12px', borderRadius: '20px',
-          background: open ? '#e0e7ff' : '#f1f5f9',
-          border: '1px solid ' + (open ? '#818cf8' : '#e2e8f0'),
+          background: translating ? '#fef3c7' : open ? '#e0e7ff' : '#f1f5f9',
+          border: '1px solid ' + (translating ? '#fbbf24' : open ? '#818cf8' : '#e2e8f0'),
           cursor: 'pointer', fontWeight: '600', fontSize: '12px',
           color: '#334155', transition: 'all 0.2s',
           whiteSpace: 'nowrap'
         }}
         title="Change language"
       >
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <circle cx="12" cy="12" r="10"/>
-          <line x1="2" y1="12" x2="22" y2="12"/>
-          <path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/>
-        </svg>
-        <span>{current.flag} {current.label}</span>
-        <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-          <path d={open ? 'M2 6.5L5 3.5L8 6.5' : 'M2 3.5L5 6.5L8 3.5'} />
-        </svg>
+        {translating ? (
+          <span>⏳ Translating…</span>
+        ) : (
+          <>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="12" cy="12" r="10"/>
+              <line x1="2" y1="12" x2="22" y2="12"/>
+              <path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/>
+            </svg>
+            <span>{current.flag} {current.label}</span>
+            <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+              <path d={open ? 'M2 6.5L5 3.5L8 6.5' : 'M2 3.5L5 6.5L8 3.5'} />
+            </svg>
+          </>
+        )}
       </button>
 
       {open && (
@@ -738,7 +804,8 @@ function LanguageSelector() {
           {LANGUAGES.map(lang => (
             <button
               key={lang.code}
-              onClick={() => triggerTranslate(lang.code)}
+              onClick={() => handleSelect(lang.code)}
+              disabled={translating}
               style={{
                 display: 'flex', alignItems: 'center', gap: '10px',
                 width: '100%', padding: '8px 12px', border: 'none',
@@ -760,11 +827,7 @@ function LanguageSelector() {
               )}
             </button>
           ))}
-          {!gtReady && (
-            <div style={{ padding: '6px 12px', fontSize: '11px', color: '#94a3b8', textAlign: 'center' }}>
-              Translation engine loading…
-            </div>
-          )}
+
         </div>
       )}
     </div>
@@ -806,10 +869,8 @@ function Header({ tab, setTab, cityAqi, alertCount, weather, onSelectPlace, ward
         {/* Search Input Box */}
         <HeaderSearch onSelectPlace={onSelectPlace} wards={wards} onSelectWard={onSelectWard} />
 
-        {/* Language Selector (drives Google Translate) */}
+        {/* Language Selector (uses backend /api/translate) */}
         <LanguageSelector />
-        {/* Hidden Google Translate container — our selector drives it programmatically */}
-        <div id="google_translate_element" style={{ position: 'absolute', top: '-9999px', left: '-9999px', opacity: 0 }}></div>
 
         {/* Segmented Navigation Control */}
         <div style={{ display: 'flex', background: '#f1f5f9', padding: '3px', borderRadius: '24px', border: '1px solid #e2e8f0' }}>

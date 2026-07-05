@@ -6,4 +6,5 @@ numpy==2.2.6
 scipy==1.14.1
 resend==2.32.2
 python-dotenv==1.0.1
+deep-translator==1.11.4
 
