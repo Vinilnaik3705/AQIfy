@@ -17,6 +17,10 @@ import os
 from dotenv import load_dotenv
 load_dotenv()
 
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+
 import sqlite3
 import uuid
 from typing import Optional, Dict, Tuple
@@ -66,6 +70,84 @@ def _get_resend_key() -> Optional[str]:
         os.environ.get("RESEND") or
         None
     )
+
+
+def _send_email(to_email: str, subject: str, html_body: str) -> bool:
+    """Send an email using SMTP (if configured), Resend (as fallback), or Console simulation."""
+    # 1. SMTP Dispatch (if SMTP credentials are provided in .env)
+    smtp_host = os.environ.get("SMTP_HOST")
+    smtp_port = os.environ.get("SMTP_PORT")
+    smtp_user = os.environ.get("SMTP_USER")
+    smtp_pass = os.environ.get("SMTP_PASSWORD")
+    smtp_from = os.environ.get("SMTP_FROM") or smtp_user
+
+    if smtp_host and smtp_port and smtp_user and smtp_pass:
+        try:
+            msg = MIMEMultipart("alternative")
+            msg["Subject"] = subject
+            msg["From"] = smtp_from
+            msg["To"] = to_email
+            
+            part = MIMEText(html_body, "html", "utf-8")
+            msg.attach(part)
+            
+            port = int(smtp_port)
+            if port == 465:
+                server = smtplib.SMTP_SSL(smtp_host, port, timeout=10.0)
+            else:
+                server = smtplib.SMTP(smtp_host, port, timeout=10.0)
+                server.starttls()
+                
+            server.login(smtp_user, smtp_pass)
+            server.sendmail(smtp_from, [to_email], msg.as_string())
+            server.quit()
+            print(f"[SMTP] Email successfully sent to {to_email} | Subject: {subject}")
+            return True
+        except Exception as e:
+            print(f"[SMTP] Failed to send email to {to_email}: {type(e).__name__}: {e}")
+            # Fall through to Resend / Console if SMTP configuration is invalid or fails
+
+    # 2. Resend API Dispatch
+    resend_key = _get_resend_key()
+    if resend_key:
+        from_email = os.environ.get("RESEND_FROM_EMAIL") or "AQI Alerts <onboarding@resend.dev>"
+        try:
+            import resend
+            resend.api_key = resend_key
+            result = resend.Emails.send({
+                "from": from_email,
+                "to": to_email,
+                "subject": subject,
+                "html": html_body
+            })
+            print(f"[RESEND] Email successfully sent to {to_email} | Resend ID: {result}")
+            return True
+        except Exception as e:
+            err_msg = str(e)
+            print(f"[RESEND] Failed to send email to {to_email}: {type(e).__name__}: {err_msg}")
+            
+            # Print a clear diagnostic message if they hit Resend's sandbox mode limit
+            if "onboarding@resend.dev" in from_email or "sandbox" in err_msg.lower() or "validation" in err_msg.lower():
+                print(
+                    "\n" + "="*85 + "\n"
+                    f"DIAGNOSTIC WARNING: Resend API call failed when sending to: {to_email}\n"
+                    f"If you are using Resend in Free/Sandbox mode (e.g. using onboarding@resend.dev),\n"
+                    f"Resend RESTRICTS emails to ONLY your own registered account email address\n"
+                    f"(vinilnaikdharavath3705@gmail.com).\n\n"
+                    f"HOW TO SEND TO OTHER EMAILS:\n"
+                    f"Option A: Add & verify a custom sending domain in your Resend dashboard, then set RESEND_FROM_EMAIL.\n"
+                    f"Option B: Use SMTP by adding these to your backend/.env file:\n"
+                    f"          SMTP_HOST=smtp.gmail.com\n"
+                    f"          SMTP_PORT=587\n"
+                    f"          SMTP_USER=your-email@gmail.com\n"
+                    f"          SMTP_PASSWORD=your-app-password\n"
+                    + "="*85 + "\n"
+                )
+            return False
+
+    # 3. Development Console Simulation
+    print(f"[CONSOLE EMAIL SIMULATION] No active mail sender config. To: {to_email} | Subject: {subject}")
+    return True
 
 
 def _aqi_category_style(aqi: float) -> Dict[str, str]:
@@ -941,10 +1023,7 @@ async def subscribe_advisory(
     base_url = str(request.base_url).rstrip("/")
     confirm_url = f"{base_url}/api/advisory/confirm?token={token}"
     
-    # Check for Resend API key
-    resend_key = _get_resend_key()
     subject = f"Confirm your AQI alert subscription for {city_name}"
-    from_email = os.environ.get("RESEND_FROM_EMAIL") or "AQI Alerts <onboarding@resend.dev>"
     
     html_body = f"""
         <div style="font-family: Arial, sans-serif; padding: 20px; color: #1e293b;">
@@ -957,23 +1036,8 @@ async def subscribe_advisory(
             <p style="font-size: 13px; color: #64748b;">If you didn't request this alert, please ignore this email.</p>
         </div>
     """
-
-    if resend_key:
-        try:
-            import resend
-            resend.api_key = resend_key
-            result = resend.Emails.send({
-                "from": from_email,
-                "to": email,
-                "subject": subject,
-                "html": html_body
-            })
-            print(f"Confirmation email successfully sent to {email} | Resend ID: {result}")
-        except Exception as e:
-            print(f"Resend failed to send confirmation to {email}: {type(e).__name__}: {e}")
-    else:
-        # Development Console simulation fallback
-        print(f"[CONSOLE EMAIL SIMULATION] No RESEND_API_KEY found. To: {email} | Subject: {subject} | Confirm Link: {confirm_url}")
+    
+    _send_email(email, subject, html_body)
 
     return {"status": "success", "message": "Verification email sent. Please check your inbox to confirm."}
 
@@ -1084,24 +1148,7 @@ async def send_aqi_alerts(base_url: str = "http://localhost:7860"):
                 unsubscribe_url=f"{base_url}/api/advisory/unsubscribe?token={row['confirm_token']}",
             )
 
-            resend_key = _get_resend_key()
-            from_email = os.environ.get("RESEND_FROM_EMAIL") or "AQI Alerts <onboarding@resend.dev>"
-            if resend_key:
-                try:
-                    import resend
-                    resend.api_key = resend_key
-                    resend.Emails.send({
-                        "from": from_email,
-                        "to": email,
-                        "subject": subject,
-                        "html": html_body
-                    })
-                    print(f"Alert email successfully sent to {email} for {city_name}")
-                except Exception as e:
-                    print(f"Resend failed to send alert email to {email}:", e)
-            else:
-                # Console simulation fallback
-                print(f"[CONSOLE EMAIL SIMULATION] Alert to: {email} | Subject: {subject}")
+            _send_email(email, subject, html_body)
 
             # Update database to avoid duplicate notifications in the next cycles
             conn = sqlite3.connect(db_path)
