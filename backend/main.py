@@ -73,8 +73,43 @@ def _get_resend_key() -> Optional[str]:
 
 
 def _send_email(to_email: str, subject: str, html_body: str) -> bool:
-    """Send an email using SMTP (if configured), Resend (as fallback), or Console simulation."""
-    # 1. SMTP Dispatch (if SMTP credentials are provided in .env)
+    """Send an email using Brevo (if configured), SMTP (if configured), Resend (as fallback), or Console simulation."""
+    # 1. Brevo HTTP API Dispatch (Perfect for Hugging Face — runs over port 443, no domain verification required)
+    brevo_key = os.environ.get("BREVO_API_KEY")
+    if brevo_key:
+        brevo_sender_email = os.environ.get("BREVO_SENDER_EMAIL") or os.environ.get("SMTP_USER")
+        if brevo_sender_email:
+            try:
+                url = "https://api.brevo.com/v3/smtp/email"
+                headers = {
+                    "accept": "application/json",
+                    "api-key": brevo_key,
+                    "content-type": "application/json"
+                }
+                payload = {
+                    "sender": {
+                        "name": "AQI Alerts",
+                        "email": brevo_sender_email
+                    },
+                    "to": [
+                        {
+                            "email": to_email
+                        }
+                    ],
+                    "subject": subject,
+                    "htmlContent": html_body
+                }
+                resp = httpx.post(url, json=payload, headers=headers, timeout=10.0)
+                if resp.status_code in (200, 201, 202):
+                    print(f"[BREVO] Email successfully sent to {to_email} | Response: {resp.json()}")
+                    return True
+                else:
+                    print(f"[BREVO] Failed to send email to {to_email}: {resp.status_code} | {resp.text}")
+            except Exception as e:
+                print(f"[BREVO] Failed to send email to {to_email}: {type(e).__name__}: {e}")
+                # Fall through to SMTP/Resend/Console if Brevo fails
+
+    # 2. SMTP Dispatch
     smtp_host = os.environ.get("SMTP_HOST")
     smtp_port = os.environ.get("SMTP_PORT")
     smtp_user = os.environ.get("SMTP_USER")
@@ -107,7 +142,7 @@ def _send_email(to_email: str, subject: str, html_body: str) -> bool:
             print(f"[SMTP] Failed to send email to {to_email}: {type(e).__name__}: {e}")
             # Fall through to Resend / Console if SMTP configuration is invalid or fails
 
-    # 2. Resend API Dispatch
+    # 3. Resend API Dispatch
     resend_key = _get_resend_key()
     if resend_key:
         from_email = os.environ.get("RESEND_FROM_EMAIL") or "AQI Alerts <onboarding@resend.dev>"
@@ -145,7 +180,7 @@ def _send_email(to_email: str, subject: str, html_body: str) -> bool:
                 )
             return False
 
-    # 3. Development Console Simulation
+    # 4. Development Console Simulation
     print(f"[CONSOLE EMAIL SIMULATION] No active mail sender config. To: {to_email} | Subject: {subject}")
     return True
 
@@ -510,7 +545,7 @@ async def clear_cache():
 
 @app.get("/api/test-email")
 async def test_email(to: str = "test@example.com"):
-    """Diagnostic endpoint to test SMTP/Resend email sending and print exact errors."""
+    """Diagnostic endpoint to test SMTP/Resend/Brevo email sending and print exact errors."""
     import sys
     import traceback
     
@@ -520,6 +555,8 @@ async def test_email(to: str = "test@example.com"):
     smtp_user = os.environ.get("SMTP_USER")
     smtp_pass = os.environ.get("SMTP_PASSWORD")
     resend_key = _get_resend_key()
+    brevo_key = os.environ.get("BREVO_API_KEY")
+    brevo_sender = os.environ.get("BREVO_SENDER_EMAIL") or smtp_user
     
     results = {
         "env": {
@@ -528,12 +565,49 @@ async def test_email(to: str = "test@example.com"):
             "SMTP_USER": smtp_user,
             "SMTP_PASSWORD_SET": bool(smtp_pass),
             "RESEND_API_KEY_SET": bool(resend_key),
+            "BREVO_API_KEY_SET": bool(brevo_key),
+            "BREVO_SENDER_EMAIL": brevo_sender,
         },
+        "brevo_status": "Not attempted",
+        "brevo_error": None,
         "smtp_status": "Not attempted",
         "smtp_error": None,
         "resend_status": "Not attempted",
         "resend_error": None,
     }
+    
+    # Try Brevo
+    if brevo_key and brevo_sender:
+        results["brevo_status"] = "Attempting..."
+        try:
+            url = "https://api.brevo.com/v3/smtp/email"
+            headers = {
+                "accept": "application/json",
+                "api-key": brevo_key,
+                "content-type": "application/json"
+            }
+            payload = {
+                "sender": {
+                    "name": "AQI Alerts Test",
+                    "email": brevo_sender
+                },
+                "to": [
+                    {
+                        "email": to
+                    }
+                ],
+                "subject": "AQI Platform Brevo Test",
+                "htmlContent": "<p>This is a diagnostic Brevo test email.</p>"
+            }
+            resp = httpx.post(url, json=payload, headers=headers, timeout=10.0)
+            if resp.status_code in (200, 201, 202):
+                results["brevo_status"] = f"Success (Code: {resp.status_code})"
+            else:
+                results["brevo_status"] = f"Failed (Code: {resp.status_code})"
+                results["brevo_error"] = resp.text
+        except Exception as e:
+            results["brevo_status"] = "Failed"
+            results["brevo_error"] = f"{type(e).__name__}: {str(e)}\n{traceback.format_exc()}"
     
     # Try SMTP
     if smtp_host and smtp_port and smtp_user and smtp_pass:
