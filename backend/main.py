@@ -508,6 +508,81 @@ async def clear_cache():
     return {"status": "ok", "message": "All caches cleared. Next request will fetch fresh live data."}
 
 
+@app.get("/api/test-email")
+async def test_email(to: str = "test@example.com"):
+    """Diagnostic endpoint to test SMTP/Resend email sending and print exact errors."""
+    import sys
+    import traceback
+    
+    # Read variables directly
+    smtp_host = os.environ.get("SMTP_HOST")
+    smtp_port = os.environ.get("SMTP_PORT")
+    smtp_user = os.environ.get("SMTP_USER")
+    smtp_pass = os.environ.get("SMTP_PASSWORD")
+    resend_key = _get_resend_key()
+    
+    results = {
+        "env": {
+            "SMTP_HOST": smtp_host,
+            "SMTP_PORT": smtp_port,
+            "SMTP_USER": smtp_user,
+            "SMTP_PASSWORD_SET": bool(smtp_pass),
+            "RESEND_API_KEY_SET": bool(resend_key),
+        },
+        "smtp_status": "Not attempted",
+        "smtp_error": None,
+        "resend_status": "Not attempted",
+        "resend_error": None,
+    }
+    
+    # Try SMTP
+    if smtp_host and smtp_port and smtp_user and smtp_pass:
+        results["smtp_status"] = "Attempting..."
+        try:
+            msg = MIMEMultipart("alternative")
+            msg["Subject"] = "AQI Platform SMTP Test"
+            msg["From"] = smtp_user
+            msg["To"] = to
+            msg.attach(MIMEText("This is a diagnostic SMTP test email.", "plain"))
+            
+            port = int(smtp_port)
+            if port == 465:
+                server = smtplib.SMTP_SSL(smtp_host, port, timeout=10.0)
+            else:
+                server = smtplib.SMTP(smtp_host, port, timeout=10.0)
+                server.ehlo()
+                server.starttls()
+                server.ehlo()
+                
+            server.login(smtp_user, smtp_pass)
+            server.sendmail(smtp_user, [to], msg.as_string())
+            server.quit()
+            results["smtp_status"] = "Success"
+        except Exception as e:
+            results["smtp_status"] = "Failed"
+            results["smtp_error"] = f"{type(e).__name__}: {str(e)}\n{traceback.format_exc()}"
+            
+    # Try Resend
+    if resend_key:
+        results["resend_status"] = "Attempting..."
+        try:
+            import resend
+            resend.api_key = resend_key
+            from_email = os.environ.get("RESEND_FROM_EMAIL") or "AQI Alerts <onboarding@resend.dev>"
+            res = resend.Emails.send({
+                "from": from_email,
+                "to": to,
+                "subject": "AQI Platform Resend Test",
+                "html": "<p>This is a diagnostic Resend test email.</p>"
+            })
+            results["resend_status"] = f"Success (ID: {res})"
+        except Exception as e:
+            results["resend_status"] = "Failed"
+            results["resend_error"] = f"{type(e).__name__}: {str(e)}"
+            
+    return results
+
+
 @app.get("/api/data-freshness")
 def get_data_freshness():
     """Return cache status for debugging — shows age of each cached entry."""
