@@ -661,6 +661,9 @@ function Header({ tab, setTab, cityAqi, alertCount, weather, onSelectPlace, ward
         {/* Search Input Box */}
         <HeaderSearch onSelectPlace={onSelectPlace} wards={wards} onSelectWard={onSelectWard} />
 
+        {/* Google Translate Dropdown Widget */}
+        <div id="google_translate_element" style={{ display: 'inline-block' }}></div>
+
         {/* Segmented Navigation Control */}
         <div style={{ display: 'flex', background: '#f1f5f9', padding: '3px', borderRadius: '24px', border: '1px solid #e2e8f0' }}>
           {/* Dashboard Button */}
