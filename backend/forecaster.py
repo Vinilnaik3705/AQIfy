@@ -883,7 +883,7 @@ class AQIForecaster:
                                   fw_offset: int,
                                   current_aqi: float) -> List[float]:
         """Build a single feature vector for inference at horizon h."""
-        scale_factor = current_aqi / max(1.0, aqi_series[now_idx])
+        scale_factor = min(2.0, max(0.5, current_aqi / max(1.0, aqi_series[now_idx])))
 
         aqi_now = current_aqi
         aqi_lag1 = aqi_series[max(0, now_idx - 1)] * scale_factor
@@ -1047,6 +1047,14 @@ class AQIForecaster:
         anchor_lo = []
         anchor_hi = []
 
+        # Use historical AQI std to clamp deltas — prevents the model from
+        # predicting impossibly large jumps that push every hour to 500.
+        hist_std = float(np.std(aqi_series)) if len(aqi_series) > 1 else 40.0
+        # Allow deltas up to 2x the historical std, scaled by sqrt(horizon)
+        # so longer horizons get more room. Floor at 40 to avoid over-clamping
+        # cities with unusually stable training data.
+        max_delta_base = max(40.0, 2.0 * hist_std)
+
         for h in HORIZONS:
             if h > hours:
                 break
@@ -1060,17 +1068,22 @@ class AQIForecaster:
             )
 
             delta_pred = float(models[h].predict([features])[0])
+            # Clamp the delta to prevent unrealistic jumps
+            max_delta_h = max_delta_base * np.sqrt(h / 6.0)
+            delta_pred = max(-max_delta_h, min(max_delta_h, delta_pred))
             pred_aqi = max(0.0, min(500.0, current_aqi + delta_pred))
 
             # Quantile bands
             if h in q_lo_models:
                 delta_lo = float(q_lo_models[h].predict([features])[0])
+                delta_lo = max(-max_delta_h, min(max_delta_h, delta_lo))
                 lo_aqi = max(0.0, min(500.0, current_aqi + delta_lo))
             else:
                 lo_aqi = max(0.0, pred_aqi - 15.0)
 
             if h in q_hi_models:
                 delta_hi = float(q_hi_models[h].predict([features])[0])
+                delta_hi = max(-max_delta_h, min(max_delta_h, delta_hi))
                 hi_aqi = max(0.0, min(500.0, current_aqi + delta_hi))
             else:
                 hi_aqi = min(500.0, pred_aqi + 15.0)
@@ -1136,6 +1149,9 @@ class AQIForecaster:
             # anchor (calibrate_india_pollutants), or "now" and "+1h" are on two
             # different scales and the blend below produces an artificial jump/
             # runaway climb as horizon-weight shifts toward this raw term.
+            # CO was already divided by 1000 in get_forecast_raw_aqi
+            # (µg/m³ → mg/m³). Pass co_already_mg=True to prevent the
+            # double-division that was zeroing out the CO sub-index.
             om_cal = calibrate_india_pollutants(
                 forecast_raw_aqi["pm2_5"][h_offset] or 0.0,
                 forecast_raw_aqi["pm10"][h_offset] or 0.0,
@@ -1143,21 +1159,25 @@ class AQIForecaster:
                 forecast_raw_aqi["so2"][h_offset] or 0.0,
                 forecast_raw_aqi["co"][h_offset] or 0.0,
                 forecast_raw_aqi["o3"][h_offset] or 0.0,
+                co_already_mg=True,
             )
             open_meteo_raw_aqi = min(calculate_indian_aqi(
                 om_cal["pm25"], om_cal["pm10"], om_cal["no2"],
                 om_cal["so2"], om_cal["co"], om_cal["o3"]), 500.0)
 
-            # Keep the ML output anchored to the actual atmospheric forecast.
-            # Raw Open-Meteo AQI drives the long-range trend while the model
-            # adds local continuity from historical patterns.
-            blend_weight = min(0.70, max(0.45, 0.55 + (metrics["skill_score"] * 0.05)))
-            weight_raw = blend_weight * min(1.0, h_idx / 24.0)
+            # Blend the ML model prediction with Open-Meteo raw, but keep
+            # the ML model dominant. The old blend ramped to 70% Open-Meteo
+            # within 24h, which meant inflated CAMS values were pulling
+            # everything to 500. Now: max 35%, ramp over 48h, so the ML
+            # delta-based prediction stays the primary driver and Open-Meteo
+            # only provides gentle directional guidance.
+            blend_weight = min(0.35, max(0.15, 0.20 + (metrics["skill_score"] * 0.05)))
+            weight_raw = blend_weight * min(1.0, h_idx / 48.0)
             predicted_aqi = (weight_raw * open_meteo_raw_aqi) + ((1.0 - weight_raw) * model_predicted_aqi)
             predicted_aqi = max(0.0, min(500.0, predicted_aqi))
 
-            conf_lo = min(conf_lo, open_meteo_raw_aqi)
-            conf_hi = max(conf_hi, open_meteo_raw_aqi)
+            conf_lo = min(conf_lo, model_predicted_aqi - 15.0)
+            conf_hi = max(conf_hi, model_predicted_aqi + 15.0)
 
             # ── Mitigation simulation ──
             hour = dt.hour
@@ -1187,6 +1207,26 @@ class AQIForecaster:
                 "wind_speed_kmh": round(ws, 1),
                 "wind_direction_deg": round(wd, 1),
             })
+
+        # ── Hour-to-hour smoothing ──
+        # Enforce a maximum AQI change between consecutive forecast hours.
+        # This prevents unrealistic jumps (e.g. 139 → 500 in one hour)
+        # while still allowing genuine gradual trends. The cap is generous
+        # enough (±30/hr) that real diurnal patterns pass through unclipped.
+        MAX_HOURLY_CHANGE = 30.0
+        if len(grid) > 1:
+            for i in range(1, len(grid)):
+                prev_aqi = grid[i - 1]["predicted_aqi"]
+                curr_aqi = grid[i]["predicted_aqi"]
+                diff = curr_aqi - prev_aqi
+                if abs(diff) > MAX_HOURLY_CHANGE:
+                    clamped = prev_aqi + MAX_HOURLY_CHANGE * (1.0 if diff > 0 else -1.0)
+                    grid[i]["predicted_aqi"] = round(max(0.0, min(500.0, clamped)), 1)
+                    # Also adjust mitigated and confidence bounds proportionally
+                    ratio = grid[i]["predicted_aqi"] / max(1.0, curr_aqi)
+                    grid[i]["mitigated_aqi"] = round(max(0.0, min(500.0, grid[i]["mitigated_aqi"] * ratio)), 1)
+                    grid[i]["confidence_low"] = round(max(0.0, min(grid[i]["predicted_aqi"], grid[i]["confidence_low"] * ratio)), 1)
+                    grid[i]["confidence_high"] = round(max(grid[i]["predicted_aqi"], min(500.0, grid[i]["confidence_high"] * ratio)), 1)
 
         return {
             "city": city_key,
@@ -1223,9 +1263,19 @@ class AQIForecaster:
             raw_aqi = calculate_indian_aqi(om_cal["pm25"], om_cal["pm10"], om_cal["no2"],
                                             om_cal["so2"], om_cal["co"], om_cal["o3"])
 
-            # Smooth transition from current_aqi to raw_aqi over the first 24 hours
-            weight_raw = min(1.0, (h + 1) / 24.0)
+            # Smooth transition from current_aqi to raw_aqi over 48 hours.
+            # Previously ramped to 100% raw in 24h, which meant inflated
+            # CAMS predictions dominated the fallback forecast too quickly.
+            weight_raw = min(0.50, (h + 1) / 48.0)
             smoothed_aqi = (weight_raw * raw_aqi) + ((1.0 - weight_raw) * current_aqi)
+
+            # Enforce hour-to-hour smoothing on fallback too
+            if grid:
+                prev_aqi = grid[-1]["predicted_aqi"]
+                diff = smoothed_aqi - prev_aqi
+                if abs(diff) > 30.0:
+                    smoothed_aqi = prev_aqi + 30.0 * (1.0 if diff > 0 else -1.0)
+            smoothed_aqi = max(0.0, min(500.0, smoothed_aqi))
 
             grid.append({
                 "timestamp": dt.isoformat(),
