@@ -456,7 +456,7 @@ class EnforcementAgent:
                 "inferred_sources": inferred_sources,
                 "vulnerability_flags": vuln_flags,
                 "nearby_sources": nearby,
-                "recommended_actions": self._recommend(severity, nearby),
+                "recommended_actions": self._recommend(severity, nearby, pollutants),
                 "status": "pending",
                 "evidence": {
                     "aqi_reading": reading["aqi"],
@@ -478,68 +478,77 @@ class EnforcementAgent:
         }
 
     @staticmethod
-    def _recommend(severity: str, nearby: List[Dict[str, Any]]) -> List[str]:
+    def _recommend(severity: str, nearby: List[Dict[str, Any]], pollutants: Dict[str, float]) -> List[str]:
         actions: List[str] = []
         cats = {s["category"] for s in nearby}
         
-        # 1. Base actions tailored by severity and source category
-        if severity == "moderate":
-            if "industrial" in cats:
-                actions.append("Routine audit of industrial stack emissions and fuel logs")
-            if "construction" in cats:
-                actions.append("Verify active construction sites have basic wind barriers installed")
-            if "vehicular" in cats:
-                actions.append("Conduct emission check compliance drives at busy intersections")
-            if "waste_burning" in cats:
-                actions.append("Deploy municipal patrols to monitor and prevent localized leaf burning")
-            if not actions:
-                actions.append("Routine municipal air quality monitoring and road sweeping")
-                
-        elif severity == "poor":
-            if "industrial" in cats:
-                actions.append("Conduct unannounced physical inspections of nearest industrial units")
-            if "construction" in cats:
-                actions.append("Enforce daily water spraying and require cover sheets for bulk material")
-            if "vehicular" in cats:
-                actions.append("Optimize traffic signal timings and restrict idle parking on major corridors")
-            if "waste_burning" in cats:
-                actions.append("Impose strict fines on open garbage burning and commercial waste dumping")
-            if not actions:
-                actions.append("Deploy mobile water mist sprinklers on high-traffic roads")
-                
-        elif severity == "very_poor":
-            if "industrial" in cats:
-                actions.append("Halt operations of coal-fired units and non-compliant boilers in the zone")
-            if "construction" in cats:
-                actions.append("Order immediate suspension of open excavation and dry-grinding construction activities")
-            if "vehicular" in cats:
-                actions.append("Restrict entry of non-essential commercial diesel trucks into the sector")
-            if "waste_burning" in cats:
-                actions.append("Halt operations at nearby landfills and establish a 24/7 localized vigil against burning")
-            if not actions:
-                actions.append("Implement mechanical road sweeping and intensive water mist spraying")
-                
-        else: # severe
-            if "industrial" in cats:
-                actions.append("EMERGENCY SHUTDOWN: Order complete halt of all solid-fuel burning industries")
-            if "construction" in cats:
-                actions.append("TOTAL BAN: Suspend all construction, demolition, and dust-generating roadwork")
-            if "vehicular" in cats:
-                actions.append("EMERGENCY RESTRICTIONS: Implement odd-even vehicle rule and halt non-electric commercial vehicles")
-            if "waste_burning" in cats:
-                actions.append("CRIMINAL ENFORCEMENT: Prosecute all open burning violations with maximum statutory penalties")
-            if not actions:
-                actions.append("Deploy high-efficiency anti-smog water cannons across the entire hot zone")
+        pm25 = pollutants.get("pm25", 0.0)
+        pm10 = pollutants.get("pm10", 0.0)
+        no2 = pollutants.get("no2", 0.0)
+        so2 = pollutants.get("so2", 0.0)
+        o3 = pollutants.get("o3", 0.0)
+        co = pollutants.get("co", 0.0)
 
-        # 2. General safety precautions by severity
+        # 1. Source-specific actions based on nearby registered emission sources
+        if "industrial" in cats:
+            if severity in ("severe", "very_poor"):
+                actions.append("EMERGENCY AUDIT: Halt operations of non-compliant boilers and solid-fuel combustion in nearby industrial units.")
+            else:
+                actions.append("Routine stack emission inspection and fuel log audit of local industrial units.")
+        
+        if "construction" in cats:
+            if severity in ("severe", "very_poor"):
+                actions.append("TOTAL BAN: Order suspension of all open excavation, demolition, and dry construction activities.")
+            else:
+                actions.append("Enforce construction site dust mitigation measures (water spraying, wind barriers, material covers).")
+
+        if "vehicular" in cats:
+            if severity in ("severe", "very_poor"):
+                actions.append("TRAFFIC RESTRICTION: Implement commercial diesel vehicle bans and odd-even vehicle rotation in hotspot sectors.")
+            else:
+                actions.append("Conduct emission compliance drives and target heavy-traffic junctions to minimize vehicle idling.")
+
+        if "waste_burning" in cats:
+            if severity in ("severe", "very_poor"):
+                actions.append("CRIMINAL ENFORCEMENT: Prosecute illegal open waste burning at dump sites with maximum statutory penalties.")
+            else:
+                actions.append("Deploy dedicated municipal patrols to identify and suppress localized garbage/leaf burning.")
+
+        # 2. Pollutant-specific actions (essential when there are no nearby registered sources)
+        # Handle particulate matter (dust/smoke)
+        if pm25 > 60.0 or pm10 > 100.0:
+            if severity in ("severe", "very_poor"):
+                actions.append("Deploy high-efficiency anti-smog water cannons and intensive mechanical sweepers on major road corridors.")
+            else:
+                actions.append("Deploy municipal water sprinklers to control dust on high-traffic roads.")
+
+        # Handle combustion/traffic markers (NO2 / CO)
+        if no2 > 40.0 or co > 2.0:
+            actions.append("Optimize traffic signal synchronization at congested intersections to lower localized exhaust build-up.")
+
+        # Handle coal/refinery marker (SO2)
+        if so2 > 40.0:
+            actions.append("Inspect fuel oil sulphur content at nearby commercial heating facilities and backup generators.")
+
+        # Handle ground-level ozone (O3)
+        if o3 > 100.0:
+            actions.append("Monitor VOC and NOx precursor sources (fuel stations, chemical storages) for leak compliance.")
+            if severity in ("severe", "very_poor"):
+                actions.append("Advise sensitive populations to restrict afternoon outdoor exposure during peak solar radiation.")
+
+        # 3. Defensive fallbacks if list is too short
+        if len(actions) < 2:
+            actions.append("Routine air quality monitoring and mechanical dust suppression.")
+        if len(actions) < 3:
+            actions.append("Deploy mobile air sensor vans to identify temporary sources.")
+
+        # 4. Severity-based general public health safety directives
         if severity == "severe":
-            actions.insert(0, "URGENT: Issue health advisory ordering citizens to stay indoors and keep windows closed")
-            actions.append("Recommend immediate suspension of physical classes in schools and outdoor work")
+            actions.insert(0, "URGENT: Issue health advisory advising citizens to remain indoors and restrict outdoor physical activity.")
         elif severity == "very_poor":
-            actions.insert(0, "Issue public warning advising N95 mask usage and avoiding outdoor exercise")
-            actions.append("Advise vulnerable groups (elderly, children) to remain indoors")
+            actions.insert(0, "Issue public warning advising N95 mask usage and avoiding strenuous outdoor exercise.")
         elif severity == "poor":
-            actions.insert(0, "Issue health advisory advising sensitive individuals to limit prolonged outdoor exposure")
+            actions.insert(0, "Issue health advisory advising sensitive individuals to limit prolonged outdoor exposure.")
             
         return actions
 
