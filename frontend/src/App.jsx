@@ -136,6 +136,21 @@ async function fetchJSON(path, opts) {
   }
 }
 
+const safeLocalStorage = {
+  getItem(key) {
+    try {
+      return window.localStorage.getItem(key)
+    } catch (_) {
+      return null
+    }
+  },
+  setItem(key, value) {
+    try {
+      window.localStorage.setItem(key, value)
+    } catch (_) {}
+  }
+}
+
 /* ── App ───────────────────────────────────────────────────────────────── */
 
 export default function App() {
@@ -167,7 +182,7 @@ export default function App() {
 
   // Advisory state
   const [advisory, setAdvisory] = useState(null)
-  const [advLang, setAdvLang] = useState(() => localStorage.getItem('aqify_lang') || 'en')
+  const [advLang, setAdvLang] = useState(() => safeLocalStorage.getItem('aqify_lang') || 'en')
   const [advProfile, setAdvProfile] = useState('healthy_adult')
   const [isAdvisoryOpen, setIsAdvisoryOpen] = useState(false)
   const [isAlertSubscriptionOpen, setIsAlertSubscriptionOpen] = useState(false)
@@ -688,7 +703,7 @@ async function _translateNodes(nodes, langCode) {
 
 function LanguageSelector({ onLanguageChange }) {
   const [open, setOpen] = useState(false)
-  const [selected, setSelected] = useState(() => localStorage.getItem('aqify_lang') || 'en')
+  const [selected, setSelected] = useState(() => safeLocalStorage.getItem('aqify_lang') || 'en')
   const [translating, setTranslating] = useState(false)
   const ref = useRef(null)
   const observerRef = useRef(null)
@@ -725,7 +740,7 @@ function LanguageSelector({ onLanguageChange }) {
 
   // Auto-apply saved language on first load
   useEffect(() => {
-    const saved = localStorage.getItem('aqify_lang')
+    const saved = safeLocalStorage.getItem('aqify_lang')
     if (saved && saved !== 'en') {
       const timer = setTimeout(() => {
         translatePage(saved)
@@ -757,7 +772,7 @@ function LanguageSelector({ onLanguageChange }) {
   const handleSelect = async (langCode) => {
     setSelected(langCode)
     setOpen(false)
-    localStorage.setItem('aqify_lang', langCode)
+    safeLocalStorage.setItem('aqify_lang', langCode)
     await translatePage(langCode)
     if (onLanguageChange) onLanguageChange(langCode)
   }
@@ -3754,7 +3769,7 @@ function PersonalAlertSubscriptionPopup({
   // Load user's recent email subscriptions on mount
   useEffect(() => {
     try {
-      const saved = localStorage.getItem('aqify_subscribed_emails')
+      const saved = safeLocalStorage.getItem('aqify_subscribed_emails')
       if (saved) {
         setRecentEmails(JSON.parse(saved))
       }
@@ -3780,7 +3795,7 @@ function PersonalAlertSubscriptionPopup({
         // Update recently subscribed emails
         const updatedList = [emailAddress, ...recentEmails.filter(e => e !== emailAddress)].slice(0, 5)
         setRecentEmails(updatedList)
-        localStorage.setItem('aqify_subscribed_emails', JSON.stringify(updatedList))
+        safeLocalStorage.setItem('aqify_subscribed_emails', JSON.stringify(updatedList))
 
         await onLoadAdvisory(selectedWard.id, lang, personalProfile);
         // Auto-reset after 4 seconds so user can subscribe another email
