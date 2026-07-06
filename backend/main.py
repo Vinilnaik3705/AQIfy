@@ -1276,15 +1276,28 @@ async def translate_texts(request: Request):
         unique_texts = list(dict.fromkeys(t for _, t in to_translate))
         try:
             translator = GoogleTranslator(source='en', target=target)
-            # deep-translator's translate_batch handles up to ~5000 chars
-            # Split into chunks of 50 texts to stay safe
             translated_map = {}
-            for chunk_start in range(0, len(unique_texts), 50):
-                chunk = unique_texts[chunk_start:chunk_start + 50]
-                translated = translator.translate_batch(chunk)
-                for orig, trans in zip(chunk, translated):
+            
+            # Fast path: join with newlines to translate in a single HTTP request
+            joined_text = "\n".join(unique_texts)
+            translated_joined = translator.translate(joined_text)
+            
+            # Split and clean up lines
+            translated_parts = [p.strip() for p in translated_joined.split("\n")] if translated_joined else []
+            
+            # If the count matches, map them directly
+            if len(translated_parts) == len(unique_texts):
+                for orig, trans in zip(unique_texts, translated_parts):
                     translated_map[orig] = trans or orig
                     _translation_cache[(orig, target)] = trans or orig
+            else:
+                # Fallback: translate using batch translation in chunks of 50
+                for chunk_start in range(0, len(unique_texts), 50):
+                    chunk = unique_texts[chunk_start:chunk_start + 50]
+                    translated = translator.translate_batch(chunk)
+                    for orig, trans in zip(chunk, translated):
+                        translated_map[orig] = trans or orig
+                        _translation_cache[(orig, target)] = trans or orig
         except Exception as e:
             print(f"Translation error: {e}")
             # Fallback: return originals
