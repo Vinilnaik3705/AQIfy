@@ -405,6 +405,7 @@ export default function App() {
         onSelectPlace={handleSelectPlace}
         wards={state?.wards || []}
         onSelectWard={handleSelectWard}
+        onLanguageChange={setAdvLang}
       />
 
       <div className="main-content">
@@ -855,7 +856,7 @@ function LanguageSelector({ onLanguageChange }) {
 
 /* ── Header ────────────────────────────────────────────────────────────── */
 
-function Header({ tab, setTab, cityAqi, alertCount, weather, onSelectPlace, wards, onSelectWard }) {
+function Header({ tab, setTab, cityAqi, alertCount, weather, onSelectPlace, wards, onSelectWard, onLanguageChange }) {
   return (
     <header className="header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 24px', background: '#ffffff', borderBottom: '1px solid var(--border)' }}>
       {/* Brand Logo and Title */}
@@ -889,7 +890,7 @@ function Header({ tab, setTab, cityAqi, alertCount, weather, onSelectPlace, ward
         <HeaderSearch onSelectPlace={onSelectPlace} wards={wards} onSelectWard={onSelectWard} />
 
         {/* Language Selector (uses backend /api/translate) */}
-        <LanguageSelector onLanguageChange={setAdvLang} />
+        <LanguageSelector onLanguageChange={onLanguageChange} />
 
         {/* Segmented Navigation Control */}
         <div style={{ display: 'flex', background: '#f1f5f9', padding: '3px', borderRadius: '24px', border: '1px solid #e2e8f0' }}>
