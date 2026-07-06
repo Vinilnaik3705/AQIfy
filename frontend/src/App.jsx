@@ -3958,10 +3958,11 @@ function EvidenceModal({ data, onClose }) {
   return (
     <div className="modal-backdrop" onClick={onClose} style={{ backdropFilter: 'blur(12px)', backgroundColor: 'rgba(15, 23, 42, 0.6)', transition: 'all 0.3s ease' }}>
       <div className="modal evidence-modal" onClick={e => e.stopPropagation()} style={{
-        maxWidth: '580px', maxHeight: '90vh', overflowY: 'auto', borderRadius: '24px',
+        maxWidth: '580px', maxHeight: '90vh', borderRadius: '24px',
         background: '#ffffff', border: '1px solid rgba(226, 232, 240, 0.8)',
         boxShadow: '0 30px 60px -15px rgba(15, 23, 42, 0.3)', padding: 0,
-        animation: 'evidence-modal-in 0.35s cubic-bezier(0.16, 1, 0.3, 1)'
+        animation: 'evidence-modal-in 0.35s cubic-bezier(0.16, 1, 0.3, 1)',
+        display: 'flex', flexDirection: 'column', overflow: 'hidden'
       }}>
 
         {/* ── Premium Gradient Header Bar ──────────────────────────── */}
@@ -3971,7 +3972,8 @@ function EvidenceModal({ data, onClose }) {
           padding: '24px 28px',
           borderRadius: '24px 24px 0 0',
           position: 'relative',
-          overflow: 'hidden'
+          overflow: 'hidden',
+          flexShrink: 0
         }}>
           <div style={{ position: 'absolute', top: 0, right: 0, width: '220px', height: '100%', opacity: 0.04, background: 'repeating-linear-gradient(45deg, #fff 0px, #fff 1px, transparent 1px, transparent 10px)', pointerEvents: 'none' }} />
 
@@ -3998,7 +4000,7 @@ function EvidenceModal({ data, onClose }) {
           </div>
         </div>
 
-        <div style={{ padding: '28px' }}>
+        <div className="no-scrollbar" style={{ padding: '28px', overflowY: 'auto', flex: 1 }}>
           {/* ── Incident Summary ──────────────────────── */}
           <div style={{ display: 'flex', gap: '22px', paddingBottom: '24px', borderBottom: '1px solid #f1f5f9', alignItems: 'center' }}>
             {/* Elegant AQI Ring */}
