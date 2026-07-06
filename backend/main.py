@@ -948,7 +948,10 @@ async def health_assistant(request: Request):
             "kn": "Kannada",
             "ta": "Tamil",
             "te": "Telugu",
-            "ml": "Malayalam"
+            "ml": "Malayalam",
+            "mr": "Marathi",
+            "gu": "Gujarati",
+            "bn": "Bengali"
         }
         lang_name = lang_names.get(lang, "English")
 

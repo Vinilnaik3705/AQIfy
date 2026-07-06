@@ -911,6 +911,24 @@ body{
   box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
 }
 
+.input-field {
+  background-color: #ffffff;
+  border: 1.5px solid #cbd5e1;
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 14px;
+  font-weight: 500;
+  color: #0f172a;
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  width: 100%;
+  box-sizing: border-box;
+}
+.input-field:focus {
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
+}
+
 /* ── Alert Subscription Widget ────────────────────────────────────────────── */
 .alert-subscription-widget-container {
   position: fixed;

@@ -167,7 +167,7 @@ export default function App() {
 
   // Advisory state
   const [advisory, setAdvisory] = useState(null)
-  const [advLang, setAdvLang] = useState('en')
+  const [advLang, setAdvLang] = useState(() => localStorage.getItem('aqify_lang') || 'en')
   const [advProfile, setAdvProfile] = useState('healthy_adult')
   const [isAdvisoryOpen, setIsAdvisoryOpen] = useState(false)
   const [isAlertSubscriptionOpen, setIsAlertSubscriptionOpen] = useState(false)
@@ -686,7 +686,7 @@ async function _translateNodes(nodes, langCode) {
   })
 }
 
-function LanguageSelector() {
+function LanguageSelector({ onLanguageChange }) {
   const [open, setOpen] = useState(false)
   const [selected, setSelected] = useState(() => localStorage.getItem('aqify_lang') || 'en')
   const [translating, setTranslating] = useState(false)
@@ -727,10 +727,13 @@ function LanguageSelector() {
   useEffect(() => {
     const saved = localStorage.getItem('aqify_lang')
     if (saved && saved !== 'en') {
-      const timer = setTimeout(() => translatePage(saved), 2000)
+      const timer = setTimeout(() => {
+        translatePage(saved)
+        if (onLanguageChange) onLanguageChange(saved)
+      }, 2000)
       return () => clearTimeout(timer)
     }
-  }, [])
+  }, [onLanguageChange])
 
   const translatePage = async (langCode) => {
     _activeLang = langCode
@@ -756,6 +759,7 @@ function LanguageSelector() {
     setOpen(false)
     localStorage.setItem('aqify_lang', langCode)
     await translatePage(langCode)
+    if (onLanguageChange) onLanguageChange(langCode)
   }
 
   const current = LANGUAGES.find(l => l.code === selected) || LANGUAGES[0]
@@ -870,7 +874,7 @@ function Header({ tab, setTab, cityAqi, alertCount, weather, onSelectPlace, ward
         <HeaderSearch onSelectPlace={onSelectPlace} wards={wards} onSelectWard={onSelectWard} />
 
         {/* Language Selector (uses backend /api/translate) */}
-        <LanguageSelector />
+        <LanguageSelector onLanguageChange={setAdvLang} />
 
         {/* Segmented Navigation Control */}
         <div style={{ display: 'flex', background: '#f1f5f9', padding: '3px', borderRadius: '24px', border: '1px solid #e2e8f0' }}>
@@ -3550,30 +3554,6 @@ function CitizensAdvisoryPopup({
                   <span style={{ fontSize: '14.5px', fontWeight: '800', color: '#be123c', display: 'flex', alignItems: 'center', gap: '6px' }}>
                     <Sparkles size={16} color="#e11d48" /> AI Health Assistant
                   </span>
-
-                  {/* Language Selector */}
-                  <select
-                    value={aiLang}
-                    onChange={(e) => setAiLang(e.target.value)}
-                    style={{
-                      fontSize: '12px',
-                      padding: '3px 8px',
-                      borderRadius: '8px',
-                      border: '1px solid #fecdd3',
-                      background: '#ffffff',
-                      color: '#be123c',
-                      fontWeight: '600',
-                      cursor: 'pointer',
-                      outline: 'none'
-                    }}
-                  >
-                    <option value="en">English</option>
-                    <option value="hi">हिन्दी (Hindi)</option>
-                    <option value="kn">ಕನ್ನಡ (Kannada)</option>
-                    <option value="ta">தமிழ் (Tamil)</option>
-                    <option value="te">తెలుగు (Telugu)</option>
-                    <option value="ml">മലയാളം (Malayalam)</option>
-                  </select>
                 </div>
 
                 <div style={{ position: 'relative' }}>
@@ -3763,12 +3743,25 @@ function PersonalAlertSubscriptionPopup({
   const [emailAddress, setEmailAddress] = useState('')
   const [subscriptionActive, setSubscriptionActive] = useState(false)
   const [subscribing, setSubscribing] = useState(false)
+  const [recentEmails, setRecentEmails] = useState([])
 
   useEffect(() => {
     if (profile) {
       setPersonalProfile(profile);
     }
   }, [profile])
+
+  // Load user's recent email subscriptions on mount
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('aqify_subscribed_emails')
+      if (saved) {
+        setRecentEmails(JSON.parse(saved))
+      }
+    } catch (e) {
+      console.error(e)
+    }
+  }, [])
 
   if (!state) return null
 
@@ -3783,6 +3776,12 @@ function PersonalAlertSubscriptionPopup({
       if (data.status === 'success') {
         setSubscriptionActive(true);
         onChangeProfile(personalProfile);
+
+        // Update recently subscribed emails
+        const updatedList = [emailAddress, ...recentEmails.filter(e => e !== emailAddress)].slice(0, 5)
+        setRecentEmails(updatedList)
+        localStorage.setItem('aqify_subscribed_emails', JSON.stringify(updatedList))
+
         await onLoadAdvisory(selectedWard.id, lang, personalProfile);
         // Auto-reset after 4 seconds so user can subscribe another email
         setTimeout(() => {
@@ -3861,7 +3860,7 @@ function PersonalAlertSubscriptionPopup({
                   <label style={{ fontSize: '12px', fontWeight: '600', color: '#64748b', display: 'block', marginBottom: '4px' }}>Email Address</label>
                   <input
                     type="email"
-                    className="select-field"
+                    className="input-field"
                     placeholder="e.g. citizen@example.com"
                     style={{ width: '100%', padding: '8px 12px', fontSize: '14px', boxSizing: 'border-box' }}
                     value={emailAddress}
@@ -3870,6 +3869,49 @@ function PersonalAlertSubscriptionPopup({
                       setSubscriptionActive(false);
                     }}
                   />
+                  
+                  {/* Subscribed Email Recommendations */}
+                  {recentEmails.length > 0 && (
+                    <div style={{ marginTop: '8px', animation: 'fadeIn 0.2s ease-in-out' }}>
+                      <span style={{ fontSize: '11px', fontWeight: '700', color: '#64748b', display: 'block', marginBottom: '4px' }}>
+                        Recently Subscribed:
+                      </span>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                        {recentEmails.map(email => (
+                          <button
+                            key={email}
+                            type="button"
+                            onClick={() => {
+                              setEmailAddress(email);
+                              setSubscriptionActive(false);
+                            }}
+                            style={{
+                              fontSize: '11px',
+                              fontWeight: '600',
+                              color: '#2563eb',
+                              background: '#eff6ff',
+                              border: '1px solid #bfdbfe',
+                              borderRadius: '12px',
+                              padding: '3px 8px',
+                              cursor: 'pointer',
+                              transition: 'all 0.15s ease',
+                              outline: 'none'
+                            }}
+                            onMouseOver={e => {
+                              e.currentTarget.style.background = '#dbeafe';
+                              e.currentTarget.style.borderColor = '#3b82f6';
+                            }}
+                            onMouseOut={e => {
+                              e.currentTarget.style.background = '#eff6ff';
+                              e.currentTarget.style.borderColor = '#bfdbfe';
+                            }}
+                          >
+                            {email}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 <button
