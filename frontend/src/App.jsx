@@ -5,6 +5,18 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import L from 'leaflet'
 import { MapContainer, TileLayer, CircleMarker, Popup, Polyline, useMap, Marker, WMSTileLayer, LayersControl, Tooltip as LeafletTooltip, ZoomControl } from 'react-leaflet'
+
+// Fix Leaflet's default marker icon Vite resolution bug
+import markerIconPng from 'leaflet/dist/images/marker-icon.png'
+import markerShadowPng from 'leaflet/dist/images/marker-shadow.png'
+
+let DefaultIcon = L.icon({
+  iconUrl: markerIconPng,
+  shadowUrl: markerShadowPng,
+  iconSize: [25, 41],
+  iconAnchor: [12, 41]
+});
+L.Marker.prototype.options.icon = DefaultIcon;
 import {
   Chart as ChartJS,
   ArcElement,
@@ -98,9 +110,15 @@ function createAqiIcon(aqi, isWard = false) {
   const size = isWard ? 26 : 32;
   const anchor = isWard ? 13 : 16;
   const ring = isWard ? '1.5px solid rgba(255,255,255,0.4)' : '2px solid rgba(255,255,255,0.6)';
+  
+  const hasAqi = aqi !== undefined && aqi !== null && !isNaN(aqi);
+  const displayVal = hasAqi ? Math.round(aqi) : '--';
+  const bgColor = hasAqi ? aqiColor(aqi) : '#64748b'; // Gray fallback for unmonitored / loading
+  const textColor = hasAqi ? getAqiTextColor(aqi) : '#ffffff';
+
   return L.divIcon({
     className: 'custom-aqi-bubble',
-    html: `<div class="aqi-bubble-inner" style="background-color: ${aqiColor(aqi)}; color: ${getAqiTextColor(aqi)}; width:${size}px; height:${size}px; line-height:${size}px; font-size:${isWard ? 10 : 12}px; border:${ring}; border-radius:50%; display:flex; align-items:center; justify-content:center; font-weight:700; box-shadow:0 2px 6px rgba(0,0,0,0.5)">${Math.round(aqi)}</div>`,
+    html: `<div class="aqi-bubble-inner" style="background-color: ${bgColor}; color: ${textColor}; width:${size}px; height:${size}px; line-height:${size}px; font-size:${isWard ? 10 : 12}px; border:${ring}; border-radius:50%; display:flex; align-items:center; justify-content:center; font-weight:700; box-shadow:0 2px 6px rgba(0,0,0,0.5)">${displayVal}</div>`,
     iconSize: [size, size],
     iconAnchor: [anchor, anchor]
   });

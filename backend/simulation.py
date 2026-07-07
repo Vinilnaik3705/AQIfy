@@ -1006,8 +1006,8 @@ class SimulationEngine:
         self._rng = random.Random(seed)
         self._cache: Dict[str, Any] = {}
         self._cache_ts: Dict[str, float] = {}
-        self._cache_ttl = 90  # 90-second cache for readings (APIs update hourly)
-        self._forecast_cache_ttl = 120  # 2-minute cache for forecasts
+        self._cache_ttl = 900  # 15-minute cache for readings (APIs update hourly)
+        self._forecast_cache_ttl = 1800  # 30-minute cache for forecasts
 
     def _calculate_plume_dispersion(
         self,
