@@ -705,12 +705,7 @@ async def _fetch_real_aqi(lat: float, lng: float) -> Optional[Dict[str, Any]]:
     if waqi_data:
         return waqi_data
 
-    # 1. Attempt OpenWeatherMap (modeled estimate, used only if no live station nearby)
-    owm_data = await _fetch_real_aqi_openweather(lat, lng)
-    if owm_data:
-        return owm_data
-
-    # 2. Attempt Open-Meteo CAMS Air Quality API (fallback)
+    # 1. Attempt Open-Meteo CAMS Air Quality API (fallback)
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.get(AQ_API_URL, params={
@@ -738,6 +733,11 @@ async def _fetch_real_aqi(lat: float, lng: float) -> Optional[Dict[str, Any]]:
                 }
     except Exception as e:
         safe_print("Open-Meteo CAMS request failed, falling back to other APIs:", e)
+
+    # 2. Attempt OpenWeatherMap (modeled estimate, used only if no live station nearby)
+    owm_data = await _fetch_real_aqi_openweather(lat, lng)
+    if owm_data:
+        return owm_data
 
     # 2. Attempt OpenAQ v3
     api_key = _get_openaq_key()
