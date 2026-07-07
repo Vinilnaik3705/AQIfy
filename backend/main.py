@@ -358,22 +358,9 @@ app = FastAPI(
     version="2.0.0",
 )
 
-# CORS — allow Vercel frontend, localhost dev, and HF Spaces.
-# Update these once you know your exact Vercel domain.
-_cors_origins = [
-    "http://localhost:5173",     # Vite dev server
-    "http://localhost:3000",     # fallback dev
-    "http://localhost:8000",     # backend self
-]
-# Dynamically add origins from environment (comma-separated)
-_extra = os.environ.get("CORS_ORIGINS", "")
-if _extra:
-    _cors_origins.extend([o.strip() for o in _extra.split(",") if o.strip()])
-
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=_cors_origins,
-    allow_origin_regex=r"https://.*\.vercel\.app",  # any Vercel preview/prod URL
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -1427,33 +1414,23 @@ async def get_aqi_details(
         }
     }
 
-# ── Static Frontend Serving (monolithic / Docker mode only) ───────────────
-# When deployed split (Vercel frontend + Render backend), the dist folder
-# won't exist and these routes are simply skipped.
+# Serve static React frontend files from the built dist folder
 frontend_dist = os.path.abspath(os.path.join(os.path.dirname(__file__), "../frontend/dist"))
-_has_frontend = os.path.isdir(frontend_dist)
+if os.path.exists(frontend_dist):
+    app.mount("/assets", StaticFiles(directory=os.path.join(frontend_dist, "assets")), name="assets")
 
-if _has_frontend:
-    assets_dir = os.path.join(frontend_dist, "assets")
-    if os.path.isdir(assets_dir):
-        app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
+@app.get("/")
+def serve_home():
+    index_file = os.path.join(frontend_dist, "index.html")
+    if os.path.exists(index_file):
+        return FileResponse(index_file, headers={"Cache-Control": "no-store, no-cache, must-revalidate"})
+    return {"message": "AQI Intervention Platform Backend Running. Build frontend to view dashboard."}
 
-    @app.get("/")
-    def serve_home():
-        index_file = os.path.join(frontend_dist, "index.html")
-        if os.path.exists(index_file):
-            return FileResponse(index_file, headers={"Cache-Control": "no-store, no-cache, must-revalidate"})
-        return {"message": "AQI Intervention Platform Backend Running. Build frontend to view dashboard."}
-
-    @app.get("/{catchall:path}")
-    def serve_static(catchall: str):
-        if catchall.startswith("api/") or catchall.startswith("docs") or catchall.startswith("openapi.json"):
-            return None
-        index_file = os.path.join(frontend_dist, "index.html")
-        if os.path.exists(index_file):
-            return FileResponse(index_file, headers={"Cache-Control": "no-store, no-cache, must-revalidate"})
-        return {"message": "Not Found"}
-else:
-    @app.get("/")
-    def api_root():
-        return {"message": "AQIfy Backend API is running.", "docs": "/docs"}
+@app.get("/{catchall:path}")
+def serve_static(catchall: str):
+    if catchall.startswith("api/") or catchall.startswith("docs") or catchall.startswith("openapi.json"):
+        return None
+    index_file = os.path.join(frontend_dist, "index.html")
+    if os.path.exists(index_file):
+        return FileResponse(index_file, headers={"Cache-Control": "no-store, no-cache, must-revalidate"})
+    return {"message": "Not Found"}
