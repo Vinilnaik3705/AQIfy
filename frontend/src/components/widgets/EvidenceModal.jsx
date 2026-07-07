@@ -7,8 +7,8 @@ import { aqiColor } from '../../lib/aqi'
 export default function EvidenceModal({ data, onClose }) {
   const [dispatched, setDispatched] = useState(false)
 
-  const POLLUTANT_LIMITS = { pm25: 60, pm10: 100, no2: 40, so2: 40, co: 2, o3: 100 }
-  const POLLUTANT_UNITS = { pm25: 'µg/m³', pm10: 'µg/m³', no2: 'µg/m³', so2: 'µg/m³', co: 'mg/m³', o3: 'µg/m³' }
+  const POLLUTANT_LIMITS = { pm25: 60, pm10: 100, no2: 40, so2: 40, co: 2000, o3: 50 }
+  const POLLUTANT_UNITS = { pm25: 'µg/m³', pm10: 'µg/m³', no2: 'ppb', so2: 'ppb', co: 'ppb', o3: 'ppb' }
   const POLLUTANT_LABELS = { pm25: 'PM2.5', pm10: 'PM10', no2: 'NO₂', so2: 'SO₂', co: 'CO', o3: 'O₃' }
 
   const sevColor = data.severity === 'severe' ? '#ef4444'
@@ -135,7 +135,7 @@ export default function EvidenceModal({ data, onClose }) {
                         {exceeded && <AlertCircle size={12} color="#ef4444" />}
                       </span>
                       <span data-notranslate style={{ color: exceeded ? '#dc2626' : '#1e293b', fontWeight: '800' }}>
-                        {typeof val === 'number' ? val.toFixed(1) : val} {POLLUTANT_UNITS[key] || ''}
+                        {typeof val === 'number' ? (key === 'co' && val < 10.0 ? (val * 1000).toFixed(0) : val.toFixed(1)) : val} {POLLUTANT_UNITS[key] || ''}
                         <span style={{ color: '#94a3b8', marginLeft: '4px', fontWeight: '500', fontSize: '11px' }}>/ {limit}</span>
                       </span>
                     </div>

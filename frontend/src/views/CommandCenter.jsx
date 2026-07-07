@@ -670,13 +670,15 @@ export default function CommandCenter({ state, selectedWard, forecast, onSelectW
                 }
               }
 
+              const coValDisplay = coVal < 10.0 ? coVal * 1000.0 : coVal;
+
               const pollutantsData = [
                 { label: 'PM2.5', value: pm25Val, unit: 'µg/m³', max: 150, color: aqiColor(pm25Val) },
                 { label: 'PM10', value: pm10Val, unit: 'µg/m³', max: 250, color: aqiColor(pm10Val) },
-                { label: 'CO', value: coVal, unit: 'mg/m³', max: 10, color: aqiColor(coVal * 50) },
-                { label: 'SO₂', value: so2Val, unit: 'µg/m³', max: 120, color: aqiColor(so2Val) },
-                { label: 'NO₂', value: no2Val, unit: 'µg/m³', max: 120, color: aqiColor(no2Val) },
-                { label: 'O₃', value: o3Val, unit: 'µg/m³', max: 180, color: aqiColor(o3Val) },
+                { label: 'CO', value: coValDisplay, unit: 'ppb', max: 2000, color: aqiColor(coVal * 50) },
+                { label: 'SO₂', value: so2Val, unit: 'ppb', max: 120, color: aqiColor(so2Val) },
+                { label: 'NO₂', value: no2Val, unit: 'ppb', max: 120, color: aqiColor(no2Val) },
+                { label: 'O₃', value: o3Val, unit: 'ppb', max: 180, color: aqiColor(o3Val) },
               ]
 
               return (
