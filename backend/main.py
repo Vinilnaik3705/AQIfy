@@ -253,14 +253,215 @@ POLLUTANT_INFO = {
 }
 
 
+def _get_fallback_guidance(profile: str, aqi: float) -> list[str]:
+    """Provide structured precautions that dynamically change based on AQI seriousness levels.
+    Brackets correspond to the AQI category scales.
+    """
+    # ── Brackets based on Indian National AQI scale ──
+    # Good / Satisfactory (AQI <= 100)
+    if aqi <= 100:
+        return {
+            "asthma": [
+                "Air quality is acceptable; standard precautions apply.",
+                "Keep rescue inhaler nearby during outdoor activity.",
+                "Report any minor irritation or wheezing to your doctor."
+            ],
+            "sensitive": [
+                "Enjoy outdoor activities with standard pacing.",
+                "Ideal day for light walks and ventilation.",
+                "Monitor children for unusual coughing."
+            ],
+            "elderly": [
+                "Fine to spend time outdoors and perform regular routines.",
+                "Keep living areas ventilated.",
+                "Stay hydrated throughout the day."
+            ],
+            "outdoor_worker": [
+                "Safe to work outdoors normally.",
+                "Keep hydrated during shifts.",
+                "Observe standard safety protocols."
+            ],
+            "healthy_adult": [
+                "Air quality is safe for all normal outdoor activities.",
+                "Great day for outdoor workouts or running.",
+                "Keep windows open to refresh indoor air."
+            ]
+        }.get(profile, [
+            "Air quality is acceptable.",
+            "Normal activities are safe.",
+            "Stay hydrated."
+        ])
+
+    # Moderate / Poor (100 < AQI <= 200)
+    elif aqi <= 200:
+        return {
+            "asthma": [
+                "AQI is elevated. Keep your rescue inhaler with you at all times.",
+                "Avoid strenuous outdoor exercises or high-energy workouts.",
+                "Consider staying indoors if you feel any chest tightness."
+            ],
+            "sensitive": [
+                "Limit prolonged outdoor play or heavy exertion.",
+                "Watch for coughing, throat irritation, or slight fatigue.",
+                "Consider wearing a basic mask if staying outdoors for hours."
+            ],
+            "elderly": [
+                "Limit outdoor morning walks when air is heavier.",
+                "Keep windows closed during peak traffic hours.",
+                "Rest indoors if you experience breathing discomfort."
+            ],
+            "outdoor_worker": [
+                "Take regular breaks in closed, cleaner air spaces.",
+                "Wear a light protective mask if working near dusty areas.",
+                "Stay well-hydrated to help clear throat irritation."
+            ],
+            "healthy_adult": [
+                "Reduce heavy outdoor workouts (e.g. long runs); shift indoors.",
+                "Close windows if you live near main traffic roads.",
+                "Take it easy if you begin to feel eye or throat irritation."
+            ]
+        }.get(profile, [
+            "Consider reducing outdoor activities.",
+            "Wear a mask if sensitive.",
+            "Keep hydrated."
+        ])
+
+    # Very Poor (200 < AQI <= 300)
+    elif aqi <= 300:
+        return {
+            "asthma": [
+                "High risk. Avoid all outdoor activity entirely today.",
+                "Keep windows closed and run an air purifier if available.",
+                "Ensure emergency medication is easily accessible."
+            ],
+            "sensitive": [
+                "Do not play outdoors. Stay in well-ventilated indoor spaces.",
+                "Wear an N95 mask if you absolutely must step outside.",
+                "Watch closely for wheezing or deep coughing."
+            ],
+            "elderly": [
+                "Stay indoors in air-conditioned or filtered rooms.",
+                "Avoid any physical strain or lifting today.",
+                "Keep emergency medical contacts handy."
+            ],
+            "outdoor_worker": [
+                "Mandatory: Wear an N95 mask during your entire shift.",
+                "Avoid heavy manual labor; take frequent breaks indoors.",
+                "Wash face and hands immediately after shifts."
+            ],
+            "healthy_adult": [
+                "Avoid prolonged outdoor running or sports.",
+                "Wear a mask for outdoor commutes.",
+                "Close all windows to keep ambient pollution out of the home."
+            ]
+        }.get(profile, [
+            "Limit outdoor activities.",
+            "Wear an N95 mask outdoors.",
+            "Keep windows closed."
+        ])
+
+    # Severe (AQI > 300)
+    else:
+        return {
+            "asthma": [
+                "CRITICAL. Stay indoors with windows closed at all costs.",
+                "Run air purifier on max; avoid any physical exertion.",
+                "Seek immediate medical attention if you experience breathing difficulty."
+            ],
+            "sensitive": [
+                "Strictly stay indoors in closed, clean-air environments.",
+                "Do not step outside without a sealed N95/N99 mask.",
+                "Monitor oxygen levels or call a doctor if symptoms worsen."
+            ],
+            "elderly": [
+                "Strictly stay inside. Avoid any outdoor exposure.",
+                "Ensure family or neighbors check on your well-being.",
+                "Keep all breathing medicines close at hand."
+            ],
+            "outdoor_worker": [
+                "Severe health hazard. Avoid working outdoors if possible.",
+                "If you must, wear a tightly sealed N95/N99 respirator.",
+                "Report any breathing distress to supervisors immediately."
+            ],
+            "healthy_adult": [
+                "Cancel all outdoor exercise; exercise indoors instead.",
+                "Keep all windows and doors closed tightly.",
+                "Limit time outdoors; wear an N95 mask if commuting."
+            ]
+        }.get(profile, [
+            "Stay indoors.",
+            "Wear an N95/N99 mask.",
+            "Seek medical help if breathless."
+        ])
+
+
+async def _get_dynamic_guidance(profile: str, current_aqi: float, city_name: str, pollutants: Dict[str, float]) -> list[str]:
+    """Retrieve precautions dynamically from Gemini or fallback to static AQI brackets."""
+    gemini_api_key = os.environ.get("GEMINI_API_KEY")
+    profile_label = PROFILE_LABELS.get(profile, profile.replace("_", " ").title())
+    
+    if not gemini_api_key:
+        print(f"[GUIDANCE] No Gemini key found. Using fallback precautions for aqi={current_aqi}.")
+        return _get_fallback_guidance(profile, current_aqi)
+
+    pollutant_summary = ", ".join([f"{k.upper()}: {v:.1f}" for k, v in pollutants.items()])
+
+    prompt = f"""You are a professional medical health advisor.
+A user has subscribed to air quality alerts for the location: '{city_name}'.
+- Current AQI: {current_aqi}
+- Current Pollutant values: {pollutant_summary}
+- User Profile: {profile_label}
+
+Please provide exactly 3 specific, practical, and highly relevant precautions they should take today.
+Make the advice highly specific to their profile ({profile_label}) and the current AQI level ({current_aqi}). For example, if the AQI is severe (>300), the advice should be extremely protective. If the AQI is moderate (100-200), it should be lighter.
+
+Return the precautions EXACTLY as a JSON list of strings, like this:
+["Precaution 1", "Precaution 2", "Precaution 3"]
+
+Do not include any bullet points, numbering, or markdown formatting (no ```json or ```). Return ONLY the raw JSON array.
+"""
+
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={gemini_api_key}"
+    headers = {"Content-Type": "application/json"}
+    payload = {
+        "contents": [{
+            "parts": [{"text": prompt}]
+        }]
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(url, json=payload, headers=headers)
+            if resp.status_code == 200:
+                res_data = resp.json()
+                text_response = res_data["candidates"][0]["content"]["parts"][0]["text"].strip()
+                
+                # Clean markdown wrapper
+                if text_response.startswith("```"):
+                    text_response = text_response.split("```")[1]
+                    if text_response.startswith("json"):
+                        text_response = text_response[4:]
+                text_response = text_response.strip()
+
+                import json
+                parsed = json.loads(text_response)
+                if isinstance(parsed, list) and len(parsed) >= 3:
+                    print(f"[GUIDANCE] Successfully fetched Gemini precautions for {profile_label} (AQI {current_aqi})")
+                    return parsed[:3]
+    except Exception as e:
+        print(f"[GUIDANCE] Failed to fetch dynamic precautions from Gemini: {e}. Falling back.")
+
+    return _get_fallback_guidance(profile, current_aqi)
+
+
 def _build_alert_email(city_name: str, current_aqi: float, profile: str,
                        pollutants: Dict[str, float], trend_delta: float,
-                       dashboard_url: str, unsubscribe_url: str) -> Tuple[str, str]:
+                       dashboard_url: str, unsubscribe_url: str,
+                       guidance: list[str]) -> Tuple[str, str]:
     """Build the branded, table-based (email-client-safe) alert email.
     Returns (subject, html_body)."""
     style = _aqi_category_style(current_aqi)
     profile_label = PROFILE_LABELS.get(profile, profile.replace("_", " ").title())
-    guidance = PROFILE_GUIDANCE.get(profile, PROFILE_GUIDANCE["healthy_adult"])
 
     if trend_delta > 10:
         trend_html = '<span style="color:#b91c1c;">&#9650; rising</span>'
@@ -1260,9 +1461,16 @@ async def send_aqi_alerts(base_url: str = "http://localhost:7860"):
             alerts_skipped += 1
             continue
 
-        # ── Build and send the alert ─────────────────────────────────────
         city_name = CITIES.get(ward_id, {}).get("name", ward_id.capitalize())
         trend_delta = current_aqi - last_alerted if last_alerted else 0.0
+
+        # ── Fetch dynamic precautions ─────────────────────────────────────
+        guidance = await _get_dynamic_guidance(
+            profile=profile,
+            current_aqi=current_aqi,
+            city_name=city_name,
+            pollutants=pollutants
+        )
 
         subject, html_body = _build_alert_email(
             city_name=city_name,
@@ -1272,6 +1480,7 @@ async def send_aqi_alerts(base_url: str = "http://localhost:7860"):
             trend_delta=trend_delta,
             dashboard_url=base_url,
             unsubscribe_url=f"{base_url}/api/advisory/unsubscribe?token={row['confirm_token']}",
+            guidance=guidance
         )
 
         sent_ok = _send_email(email, subject, html_body)

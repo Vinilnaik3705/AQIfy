@@ -28,6 +28,8 @@ export default function PersonalAlertSubscriptionPopup({
     }
   })
 
+  const [showDropdown, setShowDropdown] = useState(false)
+
   // Sync with parent profile if it changes externally (render-phase sync,
   // recommended React pattern instead of setState inside an effect)
   const [prevProfile, setPrevProfile] = useState(profile)
@@ -129,7 +131,7 @@ export default function PersonalAlertSubscriptionPopup({
                   </select>
                 </div>
 
-                <div style={{ animation: 'fadeIn 0.2s ease-in-out' }}>
+                <div style={{ animation: 'fadeIn 0.2s ease-in-out', position: 'relative' }}>
                   <label style={{ fontSize: '12px', fontWeight: '600', color: '#64748b', display: 'block', marginBottom: '4px' }}>Email Address</label>
                   <input
                     type="email"
@@ -141,48 +143,88 @@ export default function PersonalAlertSubscriptionPopup({
                       setEmailAddress(e.target.value);
                       setSubscriptionActive(false);
                     }}
+                    onFocus={() => setShowDropdown(true)}
+                    onBlur={() => {
+                      // Slight timeout to let mouse click on dropdown items register first
+                      setTimeout(() => setShowDropdown(false), 200);
+                    }}
+                    onClick={() => setShowDropdown(true)}
                   />
                   
-                  {/* Subscribed Email Recommendations */}
-                  {recentEmails.length > 0 && (
-                    <div style={{ marginTop: '8px', animation: 'fadeIn 0.2s ease-in-out' }}>
-                      <span style={{ fontSize: '11px', fontWeight: '700', color: '#64748b', display: 'block', marginBottom: '4px' }}>
-                        Recently Subscribed:
-                      </span>
-                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
-                        {recentEmails.map(email => (
-                          <button
-                            key={email}
-                            type="button"
-                            onClick={() => {
-                              setEmailAddress(email);
-                              setSubscriptionActive(false);
-                            }}
-                            style={{
-                              fontSize: '11px',
-                              fontWeight: '600',
-                              color: '#2563eb',
-                              background: '#eff6ff',
-                              border: '1px solid #bfdbfe',
-                              borderRadius: '12px',
-                              padding: '3px 8px',
-                              cursor: 'pointer',
-                              transition: 'all 0.15s ease',
-                              outline: 'none'
-                            }}
-                            onMouseOver={e => {
-                              e.currentTarget.style.background = '#dbeafe';
-                              e.currentTarget.style.borderColor = '#3b82f6';
-                            }}
-                            onMouseOut={e => {
-                              e.currentTarget.style.background = '#eff6ff';
-                              e.currentTarget.style.borderColor = '#bfdbfe';
-                            }}
-                          >
-                            {email}
-                          </button>
-                        ))}
+                  {/* Google-like Account Picker Dropdown */}
+                  {showDropdown && recentEmails.length > 0 && (
+                    <div style={{
+                      position: 'absolute',
+                      top: '100%',
+                      left: 0,
+                      right: 0,
+                      background: '#ffffff',
+                      border: '1px solid #dbeafe',
+                      borderRadius: '8px',
+                      boxShadow: '0 10px 25px -5px rgba(59, 130, 246, 0.15), 0 8px 10px -6px rgba(59, 130, 246, 0.15)',
+                      marginTop: '4px',
+                      zIndex: 9999,
+                      maxHeight: '180px',
+                      overflowY: 'auto',
+                      animation: 'fadeIn 0.15s ease-out'
+                    }}>
+                      <div style={{
+                        padding: '6px 12px',
+                        fontSize: '11px',
+                        fontWeight: '700',
+                        color: '#94a3b8',
+                        borderBottom: '1px solid #f1f5f9',
+                        background: '#f8fafc'
+                      }}>
+                        Choose an email
                       </div>
+                      {recentEmails.map(email => (
+                        <div
+                          key={email}
+                          onMouseDown={(e) => {
+                            // Use onMouseDown to fire before onBlur
+                            e.preventDefault();
+                            setEmailAddress(email);
+                            setSubscriptionActive(false);
+                            setShowDropdown(false);
+                          }}
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '10px',
+                            padding: '10px 12px',
+                            cursor: 'pointer',
+                            transition: 'background-color 0.15s ease',
+                            borderBottom: '1px solid #f8fafc'
+                          }}
+                          className="recent-email-item"
+                          onMouseEnter={(e) => {
+                            e.currentTarget.style.backgroundColor = '#eff6ff';
+                          }}
+                          onMouseLeave={(e) => {
+                            e.currentTarget.style.backgroundColor = 'transparent';
+                          }}
+                        >
+                          <div style={{
+                            width: '24px',
+                            height: '24px',
+                            borderRadius: '50%',
+                            background: '#dbeafe',
+                            color: '#2563eb',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            fontSize: '11px',
+                            fontWeight: '700',
+                            textTransform: 'uppercase'
+                          }}>
+                            {email.charAt(0)}
+                          </div>
+                          <span style={{ fontSize: '13px', fontWeight: '500', color: '#334155' }}>
+                            {email}
+                          </span>
+                        </div>
+                      ))}
                     </div>
                   )}
                 </div>
