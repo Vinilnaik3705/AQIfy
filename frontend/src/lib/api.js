@@ -1,6 +1,7 @@
 /* ── API helpers ────────────────────────────────────────────────────────── */
 
-const API = window.location.origin
+// Use environment variable for API base URL, fallback to current origin for local dev
+const API = import.meta.env.VITE_API_URL || window.location.origin
 
 export async function fetchJSON(path, opts) {
   try {
