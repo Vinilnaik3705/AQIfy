@@ -67,8 +67,9 @@ QUANTILE_HI = 0.90
 # a brand-new TCP+TLS connection per request — a real speed cost when training many
 # cities back-to-back. Separate connect/read timeouts fail fast on a dead connection
 # without waiting the full read budget.
-_HTTP_TIMEOUT = httpx.Timeout(connect=5.0, read=12.0, write=8.0, pool=5.0)
-_HTTP_CLIENT = httpx.AsyncClient(timeout=_HTTP_TIMEOUT)
+_limits = httpx.Limits(max_connections=300, max_keepalive_connections=100)
+_HTTP_TIMEOUT = httpx.Timeout(connect=5.0, read=12.0, write=8.0, pool=30.0)
+_HTTP_CLIENT = httpx.AsyncClient(timeout=_HTTP_TIMEOUT, limits=_limits)
 
 # ── Process pool for CPU-bound GBM fitting ─────────────────────────────────
 # sklearn's GradientBoostingRegressor.fit() spends most of its time in its own
