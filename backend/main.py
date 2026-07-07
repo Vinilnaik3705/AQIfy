@@ -1457,18 +1457,18 @@ async def confirm_advisory(request: Request, token: str):
     conn.close()
 
     # Fire an immediate alert check so the user doesn't wait up to 1 hour
+    public_base_url = os.environ.get("PUBLIC_BASE_URL", str(request.base_url).rstrip("/"))
     try:
-        public_base_url = os.environ.get("PUBLIC_BASE_URL", str(request.base_url).rstrip("/"))
         asyncio.create_task(send_aqi_alerts(base_url=public_base_url))
     except Exception:
         pass  # Best-effort; the periodic loop will catch it anyway
 
     # Redirect user back to frontend with a success flag
-    return RedirectResponse("/?alert=confirmed")
+    return RedirectResponse(f"{public_base_url}/?alert=confirmed")
 
 
 @app.get("/api/advisory/unsubscribe")
-async def unsubscribe_advisory(token: str):
+async def unsubscribe_advisory(request: Request, token: str):
     """Remove a subscription via the unsubscribe link included in alert emails."""
     db_path = _get_db_path()
     conn = sqlite3.connect(db_path)
@@ -1484,7 +1484,8 @@ async def unsubscribe_advisory(token: str):
     conn.commit()
     conn.close()
 
-    return RedirectResponse("/?alert=unsubscribed")
+    public_base_url = os.environ.get("PUBLIC_BASE_URL", str(request.base_url).rstrip("/"))
+    return RedirectResponse(f"{public_base_url}/?alert=unsubscribed")
 
 
 async def send_aqi_alerts(base_url: str = "http://localhost:7860"):
