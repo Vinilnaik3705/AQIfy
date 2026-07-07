@@ -241,15 +241,14 @@ PROFILE_GUIDANCE = {
     ],
 }
 
-# (label, safe-limit, unit) — the safe-limit values match the exceedance
-# thresholds already used in agents.py's EnforcementAgent for consistency.
+# (label, safe-limit, unit) — units match the dashboard metrics (gaseous pollutants in ppb)
 POLLUTANT_INFO = {
     "pm25": ("PM2.5", 60.0, "\u00b5g/m\u00b3"),
     "pm10": ("PM10", 100.0, "\u00b5g/m\u00b3"),
-    "no2": ("NO\u2082", 40.0, "\u00b5g/m\u00b3"),
-    "so2": ("SO\u2082", 40.0, "\u00b5g/m\u00b3"),
-    "o3": ("O\u2083", 100.0, "\u00b5g/m\u00b3"),
-    "co": ("CO", 2.0, "mg/m\u00b3"),
+    "no2": ("NO\u2082", 40.0, "ppb"),
+    "so2": ("SO\u2082", 40.0, "ppb"),
+    "o3": ("O\u2083", 50.0, "ppb"),
+    "co": ("CO", 2000.0, "ppb"),
 }
 
 
@@ -475,12 +474,22 @@ def _build_alert_email(city_name: str, current_aqi: float, profile: str,
         val = pollutants.get(key)
         if val is None:
             continue
-        exceeded = val > safe_limit
+        
+        # Scale CO to ppb if it's represented as a small float/ppm (e.g. 0.3 -> 300)
+        display_val = val
+        if key == "co" and val < 10.0:
+            display_val = val * 1000.0
+            
+        exceeded = display_val > safe_limit
         val_color = "#b91c1c" if exceeded else "#1e293b"
+        
+        # Format values cleanly (CO as integer if scaled to hundreds, others standard)
+        val_str = f"{display_val:.0f}" if (key == "co" or display_val.is_integer()) else f"{display_val:.1f}"
+        
         pollutant_cells.append(f"""
         <td width="33%" style="padding:10px; text-align:center; border:1px solid #e2e8f0; border-radius:6px;">
           <div style="font-size:12px; color:#64748b; font-weight:600;">{label}</div>
-          <div style="font-size:18px; font-weight:700; color:{val_color};">{val:.1f}</div>
+          <div style="font-size:18px; font-weight:700; color:{val_color};">{val_str}</div>
           <div style="font-size:11px; color:#94a3b8;">{unit} &middot; safe &lt; {safe_limit:g}</div>
         </td>""")
     # Wrap into rows of 3 (33% width each) instead of one overflowing row —
@@ -540,10 +549,14 @@ def _build_alert_email(city_name: str, current_aqi: float, profile: str,
           </td>
         </tr>
         <tr>
-          <td style="padding:16px 24px; border-top:1px solid #e2e8f0; text-align:center;">
-            <div style="font-size:11px; color:#94a3b8;">
-              You're receiving this because you subscribed to alerts for {city_name} ({profile_label}).<br/>
-              <a href="{unsubscribe_url}" style="color:#94a3b8; text-decoration:underline;">Unsubscribe from these alerts</a>
+          <td style="padding:24px; border-top:1px solid #e2e8f0; text-align:center; background:#f8fafc;">
+            <div style="font-size:12px; color:#64748b; margin-bottom:12px; font-family:Arial,sans-serif;">
+              You're receiving this because you subscribed to alerts for <strong>{city_name}</strong> ({profile_label}).
+            </div>
+            <div style="margin-top: 6px;">
+              <a href="{unsubscribe_url}" style="display:inline-block; border:1.5px solid #ef4444; color:#ef4444; background:#ffffff; padding:10px 20px; border-radius:6px; text-decoration:none; font-weight:700; font-size:13px; font-family:Arial,sans-serif;">
+                Unsubscribe from these alerts
+              </a>
             </div>
           </td>
         </tr>
