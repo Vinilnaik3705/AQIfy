@@ -527,8 +527,43 @@ async def _fetch_real_aqi_waqi(lat: float, lng: float) -> Optional[Dict[str, Any
                         dist_km = _calculate_distance(lat, lng, s_lat, s_lng)
                         if dist_km > 50.0:
                             city_key = get_nearest_live_city(lat, lng)
-                            safe_print(f"WAQI nearest station for {city_key} is too far ({dist_km:.1f}km away). Reverting to fallback.")
-                            return None
+                            city_info = CITIES.get(city_key)
+                            resolved = False
+                            if city_info:
+                                city_name = city_info["name"]
+                                search_url = f"https://api.waqi.info/search/?keyword={city_name}&token={token}"
+                                try:
+                                    search_resp = await client.get(search_url)
+                                    if search_resp.status_code == 200:
+                                        search_data = search_resp.json()
+                                        stations = search_data.get("data", [])
+                                        if stations:
+                                            def station_distance(s):
+                                                geo = (s.get("station") or {}).get("geo") or [9999.0, 9999.0]
+                                                if len(geo) < 2:
+                                                    geo = [9999.0, 9999.0]
+                                                return (geo[0] - lat)**2 + (geo[1] - lng)**2
+                                            
+                                            closest = sorted(stations, key=station_distance)[0]
+                                            c_geo = (closest.get("station") or {}).get("geo") or []
+                                            if len(c_geo) >= 2:
+                                                c_dist = _calculate_distance(lat, lng, c_geo[0], c_geo[1])
+                                                if c_dist <= 50.0:
+                                                    uid = closest.get("uid")
+                                                    feed_url = f"https://api.waqi.info/feed/@{uid}/?token={token}"
+                                                    feed_resp = await client.get(feed_url)
+                                                    if feed_resp.status_code == 200:
+                                                        feed_data = feed_resp.json()
+                                                        if feed_data.get("status") == "ok":
+                                                            aq_data = feed_data.get("data", {})
+                                                            resolved = True
+                                                            safe_print(f"WAQI resolved fallback search for {city_name}: closest station '{(closest.get('station') or {}).get('name')}' is {c_dist:.1f}km away.")
+                                except Exception as e:
+                                    safe_print(f"WAQI fallback search failed for {city_key}: {e}")
+                            
+                            if not resolved:
+                                safe_print(f"WAQI nearest station for {city_key} is too far ({dist_km:.1f}km away). Reverting to fallback.")
+                                return None
 
                     city_name = aq_data.get("city", {}).get("name", "WAQI Station")
                     iaqi = aq_data.get("iaqi", {})
