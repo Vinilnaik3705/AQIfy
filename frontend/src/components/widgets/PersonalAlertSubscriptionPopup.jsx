@@ -242,7 +242,7 @@ export default function PersonalAlertSubscriptionPopup({
                   }}>
                     <CheckCircle size={14} style={{ marginTop: '2px', flexShrink: 0 }} />
                     <span>
-                      Verification email sent! Check your inbox to confirm subscription.
+                      Alerts activated! You'll receive emails when AQI exceeds your threshold.
                     </span>
                   </div>
                 )}

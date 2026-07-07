@@ -180,9 +180,10 @@ def _send_email(to_email: str, subject: str, html_body: str) -> bool:
                 )
             return False
 
-    # 4. Development Console Simulation
+    # 4. Development Console Simulation — return False so callers know no
+    # email was actually delivered (prevents false "email sent" confirmations).
     print(f"[CONSOLE EMAIL SIMULATION] No active mail sender config. To: {to_email} | Subject: {subject}")
-    return True
+    return False
 
 
 def _aqi_category_style(aqi: float) -> Dict[str, str]:
@@ -1028,7 +1029,13 @@ async def subscribe_advisory(
     profile: str = Query(default="healthy_adult"),
     email: str = Query(...),
 ):
-    """Register a public health advisory alert subscription (double opt-in)."""
+    """Register a public health advisory alert subscription (auto-confirmed).
+
+    Subscriptions are auto-confirmed because this is a safety-critical health
+    alert system.  Requiring double opt-in caused subscriptions to silently
+    fail when the confirmation email landed in spam or the confirm link pointed
+    to localhost in production.
+    """
     if not email or "@" not in email:
         raise HTTPException(status_code=400, detail="Invalid email address.")
 
@@ -1036,48 +1043,101 @@ async def subscribe_advisory(
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
 
-    # Check for duplicates
+    # ── Smart duplicate handling ─────────────────────────────────────────
+    # Old code only checked (email, ward_id) and returned "Already subscribed"
+    # even when the existing row was never confirmed or had a different profile.
     cursor.execute(
-        "SELECT id FROM aqi_subscriptions WHERE email = ? AND ward_id = ?",
+        "SELECT id, profile, confirmed FROM aqi_subscriptions WHERE email = ? AND ward_id = ?",
         (email, ward_id)
     )
-    if cursor.fetchone():
-        conn.close()
+    existing = cursor.fetchone()
+
+    if existing:
+        existing_id, existing_profile, existing_confirmed = existing
+        needs_update = False
+
+        # Case 1: was never confirmed → fix it now
+        if not existing_confirmed:
+            needs_update = True
+
+        # Case 2: profile changed → update it
+        if existing_profile != profile:
+            needs_update = True
+
+        if needs_update:
+            cursor.execute(
+                "UPDATE aqi_subscriptions SET profile = ?, confirmed = 1, last_alerted_aqi = 0.0 WHERE id = ?",
+                (profile, existing_id)
+            )
+            conn.commit()
+            conn.close()
+            print(f"[SUBSCRIBE] Updated existing subscription id={existing_id} "
+                  f"for {email} / {ward_id}: profile={profile}, confirmed=1")
+        else:
+            conn.close()
+
+        # Even for "already subscribed", fire an immediate alert check so the
+        # user doesn't have to wait for the next hourly cycle.
+        try:
+            public_base_url = os.environ.get("PUBLIC_BASE_URL", str(request.base_url).rstrip("/"))
+            asyncio.create_task(send_aqi_alerts(base_url=public_base_url))
+        except Exception:
+            pass
+
+        if needs_update:
+            return {"status": "success", "message": "Subscription updated and activated! You will receive alerts when AQI exceeds your threshold."}
         return {"status": "success", "message": "Already subscribed for this location."}
 
-    # Insert unconfirmed subscription
+    # ── New subscription (auto-confirmed) ────────────────────────────────
     token = str(uuid.uuid4())
     cursor.execute(
-        "INSERT INTO aqi_subscriptions (ward_id, profile, email, confirm_token, confirmed, created_at) VALUES (?, ?, ?, ?, 0, ?)",
+        "INSERT INTO aqi_subscriptions (ward_id, profile, email, confirm_token, confirmed, created_at) VALUES (?, ?, ?, ?, 1, ?)",
         (ward_id, profile, email, token, datetime.now(timezone.utc).isoformat())
     )
     conn.commit()
     conn.close()
+    print(f"[SUBSCRIBE] New subscription created for {email} | ward={ward_id} | profile={profile} | auto-confirmed=True")
 
-    # Send confirmation email
+    # Send a welcome email (best-effort — the subscription is already active
+    # regardless of whether this email is delivered).
     city_name = CITIES.get(ward_id, {}).get("name", ward_id.capitalize())
-    
-    # Generate absolute confirmation link dynamically from the request host
     base_url = str(request.base_url).rstrip("/")
-    confirm_url = f"{base_url}/api/advisory/confirm?token={token}"
-    
-    subject = f"Confirm your AQI alert subscription for {city_name}"
-    
-    html_body = f"""
-        <div style="font-family: Arial, sans-serif; padding: 20px; color: #1e293b;">
-            <h2 style="color: #3b82f6;">Confirm Your Subscription</h2>
-            <p>You requested to receive air quality alerts for <strong>{city_name}</strong> (Profile: {profile.replace('_', ' ').capitalize()}).</p>
-            <p>Please click the button below to confirm your subscription:</p>
-            <div style="margin: 24px 0;">
-                <a href="{confirm_url}" style="background-color: #3b82f6; color: white; padding: 10px 20px; text-decoration: none; border-radius: 6px; font-weight: bold;">Confirm Subscription</a>
-            </div>
-            <p style="font-size: 13px; color: #64748b;">If you didn't request this alert, please ignore this email.</p>
-        </div>
-    """
-    
-    _send_email(email, subject, html_body)
+    unsubscribe_url = f"{base_url}/api/advisory/unsubscribe?token={token}"
+    profile_label = PROFILE_LABELS.get(profile, profile.replace('_', ' ').title())
+    threshold = {"asthma": 50, "sensitive": 100, "elderly": 100, "outdoor_worker": 100, "healthy_adult": 150}.get(profile, 100)
 
-    return {"status": "success", "message": "Verification email sent. Please check your inbox to confirm."}
+    welcome_subject = f"\U0001F514 AQI alerts activated for {city_name}"
+    welcome_html = f"""
+    <div style="font-family: Arial, sans-serif; padding: 20px; color: #1e293b; max-width: 600px; margin: 0 auto;">
+        <h2 style="color: #3b82f6;">\U00002705 Your AQI Alert Subscription is Active</h2>
+        <p>You will receive air quality alerts for <strong>{city_name}</strong> whenever the AQI exceeds <strong>{threshold}</strong> (your profile: {profile_label}).</p>
+        <p style="font-size: 14px; color: #475569;">No further action is needed — alerts are already active.</p>
+        <div style="margin: 20px 0; padding: 14px; background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px;">
+            <strong style="color: #166534;">What happens next?</strong>
+            <ul style="color: #334155; margin: 8px 0 0 0; padding-left: 20px;">
+                <li>We check AQI levels every hour</li>
+                <li>If AQI exceeds {threshold}, you'll get a detailed alert email</li>
+                <li>Each alert includes pollutant breakdown and health guidance for your profile</li>
+            </ul>
+        </div>
+        <p style="font-size: 12px; color: #94a3b8;">Don't want these alerts? <a href="{unsubscribe_url}" style="color: #94a3b8;">Unsubscribe</a></p>
+    </div>
+    """
+
+    email_sent = _send_email(email, welcome_subject, welcome_html)
+
+    # Fire an immediate alert check so the user gets their first alert right
+    # away if AQI is already above threshold (don't wait for the hourly loop).
+    try:
+        public_base_url = os.environ.get("PUBLIC_BASE_URL", str(request.base_url).rstrip("/"))
+        asyncio.create_task(send_aqi_alerts(base_url=public_base_url))
+    except Exception:
+        pass
+
+    if email_sent:
+        return {"status": "success", "message": "Subscription activated! A welcome email has been sent to your inbox."}
+    else:
+        return {"status": "success", "message": "Subscription activated! You will receive alerts when AQI exceeds your threshold."}
 
 
 @app.get("/api/advisory/confirm")
@@ -1129,7 +1189,11 @@ async def unsubscribe_advisory(token: str):
 
 
 async def send_aqi_alerts(base_url: str = "http://localhost:7860"):
-    """Query confirmed subscriptions, fetch current AQI, and send alert emails if threshold exceeded."""
+    """Query confirmed subscriptions, fetch current AQI, and send alert emails if threshold exceeded.
+
+    Includes comprehensive per-subscription logging so silent failures are
+    never a mystery again.
+    """
     db_path = os.path.join(os.path.dirname(__file__), "subscriptions.db")
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
@@ -1139,9 +1203,10 @@ async def send_aqi_alerts(base_url: str = "http://localhost:7860"):
     conn.close()
 
     if not rows:
+        print("[ALERT LOOP] No confirmed subscriptions found — nothing to do.")
         return
 
-    print(f"Checking thresholds for {len(rows)} confirmed subscriptions...")
+    print(f"[ALERT LOOP] Checking thresholds for {len(rows)} confirmed subscription(s)...")
     THRESHOLDS = {
         "asthma": 50.0,
         "sensitive": 100.0,
@@ -1151,10 +1216,13 @@ async def send_aqi_alerts(base_url: str = "http://localhost:7860"):
     }
 
     # Fetch latest simulation snapshot to get current AQI + full pollutant
-    # breakdown for each ward (previously only "aqi" was kept, which is why
-    # the old template couldn't show a pollutant breakdown at all).
+    # breakdown for each ward.
     readings = await sim.generate_readings("all")
     ward_reading_map = {r["ward_id"]: r for r in readings}
+
+    alerts_sent = 0
+    alerts_skipped = 0
+    alerts_failed = 0
 
     for row in rows:
         ward_id = row["ward_id"]
@@ -1163,6 +1231,12 @@ async def send_aqi_alerts(base_url: str = "http://localhost:7860"):
         last_alerted = row["last_alerted_aqi"]
 
         reading = ward_reading_map.get(ward_id)
+        if not reading:
+            # Try parent city key for ward sub-localities (e.g. "delhi_rohini" → "delhi")
+            parent_key = ward_id.split("_")[0] if "_" in ward_id else None
+            if parent_key:
+                reading = ward_reading_map.get(parent_key)
+
         current_aqi = reading["aqi"] if reading else 80.0
         pollutants = reading.get("pollutants", {}) if reading else {}
         threshold = THRESHOLDS.get(profile, 100.0)
@@ -1172,29 +1246,122 @@ async def send_aqi_alerts(base_url: str = "http://localhost:7860"):
         # so the very first alert fires immediately when AQI >= threshold.
         is_first_alert = (last_alerted is None or last_alerted == 0.0)
         delta_ok = is_first_alert or abs(current_aqi - last_alerted) > 10.0
-        if current_aqi >= threshold and delta_ok:
-            city_name = CITIES.get(ward_id, {}).get("name", ward_id.capitalize())
-            trend_delta = current_aqi - last_alerted if last_alerted else 0.0
 
-            subject, html_body = _build_alert_email(
-                city_name=city_name,
-                current_aqi=current_aqi,
-                profile=profile,
-                pollutants=pollutants,
-                trend_delta=trend_delta,
-                dashboard_url=base_url,
-                unsubscribe_url=f"{base_url}/api/advisory/unsubscribe?token={row['confirm_token']}",
-            )
+        if current_aqi < threshold:
+            print(f"[ALERT LOOP]   SKIP {email} | {ward_id} ({profile}): "
+                  f"AQI {current_aqi:.0f} < threshold {threshold:.0f}")
+            alerts_skipped += 1
+            continue
 
-            _send_email(email, subject, html_body)
+        if not delta_ok:
+            print(f"[ALERT LOOP]   SKIP {email} | {ward_id} ({profile}): "
+                  f"AQI {current_aqi:.0f} ≥ {threshold:.0f} but delta from last alert "
+                  f"({last_alerted:.0f}) is ≤ 10 — suppressing duplicate")
+            alerts_skipped += 1
+            continue
 
-            # Update database to avoid duplicate notifications in the next cycles
+        # ── Build and send the alert ─────────────────────────────────────
+        city_name = CITIES.get(ward_id, {}).get("name", ward_id.capitalize())
+        trend_delta = current_aqi - last_alerted if last_alerted else 0.0
+
+        subject, html_body = _build_alert_email(
+            city_name=city_name,
+            current_aqi=current_aqi,
+            profile=profile,
+            pollutants=pollutants,
+            trend_delta=trend_delta,
+            dashboard_url=base_url,
+            unsubscribe_url=f"{base_url}/api/advisory/unsubscribe?token={row['confirm_token']}",
+        )
+
+        sent_ok = _send_email(email, subject, html_body)
+
+        if sent_ok:
+            # Only update last_alerted_aqi when the email was actually
+            # delivered — otherwise the next cycle will retry.
             conn = sqlite3.connect(db_path)
             cursor = conn.cursor()
             cursor.execute("UPDATE aqi_subscriptions SET last_alerted_aqi = ? WHERE id = ?", (current_aqi, row["id"]))
             conn.commit()
             conn.close()
+            alerts_sent += 1
+            print(f"[ALERT LOOP]   SENT {email} | {ward_id} ({profile}): "
+                  f"AQI {current_aqi:.0f} ≥ {threshold:.0f} — alert delivered")
+        else:
+            alerts_failed += 1
+            print(f"[ALERT LOOP]   FAIL {email} | {ward_id} ({profile}): "
+                  f"AQI {current_aqi:.0f} ≥ {threshold:.0f} — email send FAILED, will retry next cycle")
 
+    print(f"[ALERT LOOP] Done: {alerts_sent} sent, {alerts_skipped} skipped, {alerts_failed} failed")
+
+
+@app.get("/api/advisory/subscriptions/debug")
+async def debug_subscriptions():
+    """Diagnostic endpoint — returns all subscriptions, email config status, and current AQI.
+
+    Useful for debugging why alerts aren't being sent without needing to
+    inspect the database or server logs directly.
+    """
+    db_path = os.path.join(os.path.dirname(__file__), "subscriptions.db")
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute("SELECT * FROM aqi_subscriptions").fetchall()
+    conn.close()
+
+    THRESHOLDS = {
+        "asthma": 50.0,
+        "sensitive": 100.0,
+        "elderly": 100.0,
+        "outdoor_worker": 100.0,
+        "healthy_adult": 150.0,
+    }
+
+    # Check email provider availability
+    brevo_ok = bool(os.environ.get("BREVO_API_KEY"))
+    smtp_ok = all(os.environ.get(k) for k in ("SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_PASSWORD"))
+    resend_ok = bool(_get_resend_key())
+    email_config = {
+        "brevo_configured": brevo_ok,
+        "smtp_configured": smtp_ok,
+        "resend_configured": resend_ok,
+        "any_provider_active": brevo_ok or smtp_ok or resend_ok,
+    }
+
+    # Try to get current AQI readings
+    try:
+        readings = await sim.generate_readings("all")
+        ward_aqi_map = {r["ward_id"]: round(r["aqi"], 1) for r in readings}
+    except Exception:
+        ward_aqi_map = {}
+
+    subscriptions = []
+    for row in rows:
+        d = dict(row)
+        ward_id = d["ward_id"]
+        profile = d["profile"]
+        threshold = THRESHOLDS.get(profile, 100.0)
+        current_aqi = ward_aqi_map.get(ward_id, "N/A")
+        would_alert = current_aqi != "N/A" and current_aqi >= threshold
+
+        subscriptions.append({
+            "id": d["id"],
+            "ward_id": ward_id,
+            "profile": profile,
+            "email": d["email"][:3] + "***" + d["email"][d["email"].index("@"):],  # mask email
+            "confirmed": bool(d["confirmed"]),
+            "threshold": threshold,
+            "current_aqi": current_aqi,
+            "would_alert": would_alert,
+            "last_alerted_aqi": d["last_alerted_aqi"],
+            "created_at": d["created_at"],
+        })
+
+    return {
+        "email_config": email_config,
+        "total_subscriptions": len(subscriptions),
+        "confirmed_count": sum(1 for s in subscriptions if s["confirmed"]),
+        "subscriptions": subscriptions,
+    }
 
 
 @app.get("/api/alerts")
