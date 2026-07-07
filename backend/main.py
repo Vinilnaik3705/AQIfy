@@ -42,8 +42,21 @@ from forecaster import AQIForecaster
 
 # ── Database Initialization ──────────────────────────────────────────────────
 
+def _get_db_path():
+    """Retrieve the persistent DB path.
+    Mounts to Hugging Face Spaces /data if writable, or custom path.
+    """
+    env_path = os.environ.get("PERSISTENT_DB_PATH")
+    if env_path:
+        os.makedirs(os.path.dirname(env_path), exist_ok=True)
+        return env_path
+    if os.path.exists("/data") and os.access("/data", os.W_OK):
+        return "/data/subscriptions.db"
+    return os.path.join(os.path.dirname(__file__), "subscriptions.db")
+
+
 def init_db():
-    db_path = os.path.join(os.path.dirname(__file__), "subscriptions.db")
+    db_path = _get_db_path()
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
     cursor.execute("""
@@ -1311,7 +1324,7 @@ async def subscribe_advisory(
     if not email or "@" not in email:
         raise HTTPException(status_code=400, detail="Invalid email address.")
 
-    db_path = os.path.join(os.path.dirname(__file__), "subscriptions.db")
+    db_path = _get_db_path()
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
 
@@ -1429,7 +1442,7 @@ async def subscribe_advisory(
 @app.get("/api/advisory/confirm")
 async def confirm_advisory(request: Request, token: str):
     """Verify double opt-in email subscription and activate it."""
-    db_path = os.path.join(os.path.dirname(__file__), "subscriptions.db")
+    db_path = _get_db_path()
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
     
@@ -1457,7 +1470,7 @@ async def confirm_advisory(request: Request, token: str):
 @app.get("/api/advisory/unsubscribe")
 async def unsubscribe_advisory(token: str):
     """Remove a subscription via the unsubscribe link included in alert emails."""
-    db_path = os.path.join(os.path.dirname(__file__), "subscriptions.db")
+    db_path = _get_db_path()
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
 
@@ -1480,7 +1493,7 @@ async def send_aqi_alerts(base_url: str = "http://localhost:7860"):
     Includes comprehensive per-subscription logging so silent failures are
     never a mystery again.
     """
-    db_path = os.path.join(os.path.dirname(__file__), "subscriptions.db")
+    db_path = _get_db_path()
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
@@ -1599,7 +1612,7 @@ async def debug_subscriptions():
     Useful for debugging why alerts aren't being sent without needing to
     inspect the database or server logs directly.
     """
-    db_path = os.path.join(os.path.dirname(__file__), "subscriptions.db")
+    db_path = _get_db_path()
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     rows = conn.execute("SELECT * FROM aqi_subscriptions").fetchall()
