@@ -1,7 +1,7 @@
 /* ── API helpers ────────────────────────────────────────────────────────── */
 
-// Use environment variable for API base URL, fallback to current origin for local dev
-const API = import.meta.env.VITE_API_URL || window.location.origin
+// Use Vercel serverless API routes (which proxy to Render backend)
+const API = '/api'
 
 export async function fetchJSON(path, opts) {
   try {
