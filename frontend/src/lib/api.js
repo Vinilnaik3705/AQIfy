@@ -1,6 +1,10 @@
 /* ── API helpers ────────────────────────────────────────────────────────── */
 
-const API = window.location.origin
+// In split deployments (Vercel frontend + Render backend), set the
+// VITE_API_URL env var in Vercel project settings to your Render URL,
+// e.g. "https://aqify-backend.onrender.com".
+// Falls back to same-origin for monolithic (Docker / HF Spaces) mode.
+const API = (import.meta.env.VITE_API_URL || window.location.origin).replace(/\/+$/, '')
 
 export async function fetchJSON(path, opts) {
     try {

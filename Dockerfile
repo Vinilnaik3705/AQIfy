@@ -24,11 +24,13 @@ COPY --from=frontend-builder /app/frontend/dist ./frontend/dist
 # Copy backend files
 COPY backend ./backend
 
-# API keys (WAQI_TOKEN, OPENAQ_API_KEY, RESEND_API_KEY) are injected at runtime
-# via Hugging Face Spaces secrets — do NOT COPY .env into the image.
+# API keys (RESEND_API_KEY, BREVO_API_KEY, etc.) are injected at runtime
+# via environment variables — do NOT COPY .env into the image.
 
-# Hugging Face Spaces default port is 7860
-EXPOSE 7860
+# PORT is set by the hosting platform (Render, Railway, etc.)
+# Default to 10000 (Render's default) if not set.
+ENV PORT=10000
+EXPOSE ${PORT}
 
 WORKDIR /app/backend
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "7860"]
+CMD uvicorn main:app --host 0.0.0.0 --port ${PORT}
