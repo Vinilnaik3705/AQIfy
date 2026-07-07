@@ -58,6 +58,14 @@ def init_db():
             created_at TEXT NOT NULL
         )
     """)
+    
+    # ── Database Migration: Add lang column if missing ───────────────────
+    cursor.execute("PRAGMA table_info(aqi_subscriptions)")
+    columns = [col[1] for col in cursor.fetchall()]
+    if "lang" not in columns:
+        cursor.execute("ALTER TABLE aqi_subscriptions ADD COLUMN lang TEXT DEFAULT 'en'")
+        print("[MIGRATION] Successfully added 'lang' column to aqi_subscriptions.")
+
     conn.commit()
     conn.close()
 
@@ -394,14 +402,28 @@ def _get_fallback_guidance(profile: str, aqi: float) -> list[str]:
         ])
 
 
-async def _get_dynamic_guidance(profile: str, current_aqi: float, city_name: str, pollutants: Dict[str, float]) -> list[str]:
+async def _get_dynamic_guidance(profile: str, current_aqi: float, city_name: str, pollutants: Dict[str, float], lang: str = "en") -> list[str]:
     """Retrieve precautions dynamically from Gemini or fallback to static AQI brackets."""
     gemini_api_key = os.environ.get("GEMINI_API_KEY")
     profile_label = PROFILE_LABELS.get(profile, profile.replace("_", " ").title())
     
+    lang_names = {
+        "en": "English",
+        "hi": "Hindi",
+        "kn": "Kannada",
+        "ta": "Tamil",
+        "te": "Telugu",
+        "ml": "Malayalam",
+        "mr": "Marathi",
+        "gu": "Gujarati",
+        "bn": "Bengali"
+    }
+    lang_name = lang_names.get(lang, "English")
+    
     if not gemini_api_key:
-        print(f"[GUIDANCE] No Gemini key found. Using fallback precautions for aqi={current_aqi}.")
-        return _get_fallback_guidance(profile, current_aqi)
+        print(f"[GUIDANCE] No Gemini key found. Using fallback precautions for aqi={current_aqi} in lang={lang}.")
+        fallback = _get_fallback_guidance(profile, current_aqi)
+        return [_translate_text(t, lang) for t in fallback]
 
     pollutant_summary = ", ".join([f"{k.upper()}: {v:.1f}" for k, v in pollutants.items()])
 
@@ -412,7 +434,9 @@ A user has subscribed to air quality alerts for the location: '{city_name}'.
 - User Profile: {profile_label}
 
 Please provide exactly 3 specific, practical, and highly relevant precautions they should take today.
-Make the advice highly specific to their profile ({profile_label}) and the current AQI level ({current_aqi}). For example, if the AQI is severe (>300), the advice should be extremely protective. If the AQI is moderate (100-200), it should be lighter.
+Make the advice highly specific to their profile ({profile_label}) and the current AQI level ({current_aqi}).
+
+IMPORTANT: You must write your entire response in the language '{lang_name}' (language code: '{lang}').
 
 Return the precautions EXACTLY as a JSON list of strings, like this:
 ["Precaution 1", "Precaution 2", "Precaution 3"]
@@ -445,29 +469,45 @@ Do not include any bullet points, numbering, or markdown formatting (no ```json 
                 import json
                 parsed = json.loads(text_response)
                 if isinstance(parsed, list) and len(parsed) >= 3:
-                    print(f"[GUIDANCE] Successfully fetched Gemini precautions for {profile_label} (AQI {current_aqi})")
+                    print(f"[GUIDANCE] Successfully fetched Gemini precautions for {profile_label} (AQI {current_aqi}) in {lang_name}")
                     return parsed[:3]
     except Exception as e:
         print(f"[GUIDANCE] Failed to fetch dynamic precautions from Gemini: {e}. Falling back.")
 
-    return _get_fallback_guidance(profile, current_aqi)
+    fallback = _get_fallback_guidance(profile, current_aqi)
+    return [_translate_text(t, lang) for t in fallback]
 
 
 def _build_alert_email(city_name: str, current_aqi: float, profile: str,
                        pollutants: Dict[str, float], trend_delta: float,
                        dashboard_url: str, unsubscribe_url: str,
-                       guidance: list[str]) -> Tuple[str, str]:
+                       guidance: list[str], lang: str = "en") -> Tuple[str, str]:
     """Build the branded, table-based (email-client-safe) alert email.
     Returns (subject, html_body)."""
     style = _aqi_category_style(current_aqi)
+    style_label_translated = _translate_text(style['label'], lang)
     profile_label = PROFILE_LABELS.get(profile, profile.replace("_", " ").title())
+    profile_label_translated = _translate_text(profile_label, lang)
 
+    # ── Translate Trend Delta ─────────────────────────────────────────────
     if trend_delta > 10:
-        trend_html = '<span style="color:#b91c1c;">&#9650; rising</span>'
+        trend_label = _translate_text("rising", lang)
+        trend_html = f'<span style="color:#b91c1c;">&#9650; {trend_label}</span>'
     elif trend_delta < -10:
-        trend_html = '<span style="color:#16a34a;">&#9660; falling</span>'
+        trend_label = _translate_text("falling", lang)
+        trend_html = f'<span style="color:#16a34a;">&#9660; {trend_label}</span>'
     else:
-        trend_html = '<span style="color:#64748b;">&#8212; steady</span>'
+        trend_label = _translate_text("steady", lang)
+        trend_html = f'<span style="color:#64748b;">&#8212; {trend_label}</span>'
+
+    # ── Translate Header Titles ───────────────────────────────────────────
+    personal_alert_title = _translate_text("Personal Air Quality Alert", lang)
+    trend_since_text = _translate_text("Trend since last alert: ", lang)
+    pollutant_breakdown_title = _translate_text("Pollutant breakdown", lang)
+    what_this_means_title = _translate_text("What this means for you", lang)
+    view_dashboard_btn = _translate_text("View Live Dashboard", lang)
+    unsubscribe_info_text = _translate_text(f"You're receiving this because you subscribed to alerts for {city_name} ({profile_label}).", lang)
+    unsubscribe_btn_text = _translate_text("Unsubscribe from these alerts", lang)
 
     pollutant_cells = []
     for key, (label, safe_limit, unit) in POLLUTANT_INFO.items():
@@ -486,11 +526,13 @@ def _build_alert_email(city_name: str, current_aqi: float, profile: str,
         # Format values cleanly (CO as integer if scaled to hundreds, others standard)
         val_str = f"{display_val:.0f}" if (key == "co" or display_val.is_integer()) else f"{display_val:.1f}"
         
+        safe_translated = _translate_text("safe", lang)
+
         pollutant_cells.append(f"""
         <td width="33%" style="padding:10px; text-align:center; border:1px solid #e2e8f0; border-radius:6px;">
           <div style="font-size:12px; color:#64748b; font-weight:600;">{label}</div>
           <div style="font-size:18px; font-weight:700; color:{val_color};">{val_str}</div>
-          <div style="font-size:11px; color:#94a3b8;">{unit} &middot; safe &lt; {safe_limit:g}</div>
+          <div style="font-size:11px; color:#94a3b8;">{unit} &middot; {safe_translated} &lt; {safe_limit:g}</div>
         </td>""")
     # Wrap into rows of 3 (33% width each) instead of one overflowing row —
     # up to 6 pollutants means up to 2 rows.
@@ -504,7 +546,8 @@ def _build_alert_email(city_name: str, current_aqi: float, profile: str,
         for tip in guidance
     )
 
-    subject = f"{style['dot']} AQI Alert: {city_name} is {style['label']} ({current_aqi:.0f})"
+    subject_alert_text = _translate_text(f"AQI Alert: {city_name} is {style['label']}", lang)
+    subject = f"{style['dot']} {subject_alert_text} ({current_aqi:.0f})"
 
     html = f"""
     <div style="background:#f1f5f9; padding:24px 12px; font-family:Arial,Helvetica,sans-serif;">
@@ -512,7 +555,7 @@ def _build_alert_email(city_name: str, current_aqi: float, profile: str,
         <tr>
           <td style="padding:20px 24px; background:#1e293b;">
             <span style="font-size:18px; font-weight:800; color:#ffffff;">AQIfy</span>
-            <span style="font-size:12px; color:#94a3b8; margin-left:8px;">Personal Air Quality Alert</span>
+            <span style="font-size:12px; color:#94a3b8; margin-left:8px;">{personal_alert_title}</span>
           </td>
         </tr>
         <tr>
@@ -522,8 +565,8 @@ def _build_alert_email(city_name: str, current_aqi: float, profile: str,
                 <td style="padding:28px 24px; text-align:center;">
                   <div style="font-size:13px; color:#64748b; font-weight:600; text-transform:uppercase; letter-spacing:0.05em;">{city_name}</div>
                   <div style="font-size:48px; font-weight:800; color:{style['color']}; line-height:1.1; margin-top:4px;">{current_aqi:.0f}</div>
-                  <div style="font-size:16px; font-weight:700; color:{style['color']};">{style['dot']} {style['label']}</div>
-                  <div style="font-size:12px; color:#64748b; margin-top:4px;">Trend since last alert: {trend_html}</div>
+                  <div style="font-size:16px; font-weight:700; color:{style['color']};">{style['dot']} {style_label_translated}</div>
+                  <div style="font-size:12px; color:#64748b; margin-top:4px;">{trend_since_text} {trend_html}</div>
                 </td>
               </tr>
             </table>
@@ -531,31 +574,31 @@ def _build_alert_email(city_name: str, current_aqi: float, profile: str,
         </tr>
         <tr>
           <td style="padding:22px 24px 4px;">
-            <div style="font-size:13px; font-weight:700; color:#1e293b; text-transform:uppercase; letter-spacing:0.03em; margin-bottom:10px;">Pollutant breakdown</div>
+            <div style="font-size:13px; font-weight:700; color:#1e293b; text-transform:uppercase; letter-spacing:0.03em; margin-bottom:10px;">{pollutant_breakdown_title}</div>
             <table role="presentation" width="100%" cellpadding="0" cellspacing="6">{pollutant_rows}</table>
           </td>
         </tr>
         <tr>
           <td style="padding:20px 24px 4px;">
             <div style="font-size:13px; font-weight:700; color:#1e293b; text-transform:uppercase; letter-spacing:0.03em; margin-bottom:8px;">
-              What this means for you &mdash; {profile_label}
+              {what_this_means_title} &mdash; {profile_label_translated}
             </div>
             <table role="presentation" width="100%" cellpadding="0" cellspacing="0">{guidance_html}</table>
           </td>
         </tr>
         <tr>
           <td style="padding:24px; text-align:center;">
-            <a href="{dashboard_url}" style="display:inline-block; background:#3b82f6; color:#ffffff; padding:12px 28px; border-radius:8px; text-decoration:none; font-weight:700; font-size:14px;">View Live Dashboard</a>
+            <a href="{dashboard_url}" style="display:inline-block; background:#3b82f6; color:#ffffff; padding:12px 28px; border-radius:8px; text-decoration:none; font-weight:700; font-size:14px;">{view_dashboard_btn}</a>
           </td>
         </tr>
         <tr>
           <td style="padding:24px; border-top:1px solid #e2e8f0; text-align:center; background:#f8fafc;">
             <div style="font-size:12px; color:#64748b; margin-bottom:12px; font-family:Arial,sans-serif;">
-              You're receiving this because you subscribed to alerts for <strong>{city_name}</strong> ({profile_label}).
+              {unsubscribe_info_text}
             </div>
             <div style="margin-top: 6px;">
               <a href="{unsubscribe_url}" style="display:inline-block; border:1.5px solid #ef4444; color:#ef4444; background:#ffffff; padding:10px 20px; border-radius:6px; text-decoration:none; font-weight:700; font-size:13px; font-family:Arial,sans-serif;">
-                Unsubscribe from these alerts
+                {unsubscribe_btn_text}
               </a>
             </div>
           </td>
@@ -1236,12 +1279,27 @@ IMPORTANT: Return ONLY the raw JSON object. Do not wrap it in markdown block quo
 
 # ── Email Alert Subscriptions (SQLite + Resend) ──────────────────────────────
 
+def _translate_text(text: str, target_lang: str) -> str:
+    """Helper to translate static text to the user's selected language using deep-translator."""
+    if not target_lang or target_lang == "en" or not text.strip():
+        return text
+    try:
+        from deep_translator import GoogleTranslator
+        translator = GoogleTranslator(source='en', target=target_lang)
+        translated = translator.translate(text)
+        return translated if translated else text
+    except Exception as e:
+        print(f"[TRANSLATION FALLBACK] Failed to translate '{text[:30]}...' to {target_lang}: {e}")
+        return text
+
+
 @app.post("/api/advisory/subscribe")
 async def subscribe_advisory(
     request: Request,
     ward_id: str = Query(...),
     profile: str = Query(default="healthy_adult"),
     email: str = Query(...),
+    lang: str = Query(default="en"),
 ):
     """Register a public health advisory alert subscription (auto-confirmed).
 
@@ -1261,13 +1319,13 @@ async def subscribe_advisory(
     # Old code only checked (email, ward_id) and returned "Already subscribed"
     # even when the existing row was never confirmed or had a different profile.
     cursor.execute(
-        "SELECT id, profile, confirmed FROM aqi_subscriptions WHERE email = ? AND ward_id = ?",
+        "SELECT id, profile, confirmed, lang FROM aqi_subscriptions WHERE email = ? AND ward_id = ?",
         (email, ward_id)
     )
     existing = cursor.fetchone()
 
     if existing:
-        existing_id, existing_profile, existing_confirmed = existing
+        existing_id, existing_profile, existing_confirmed, existing_lang = existing
         needs_update = False
 
         # Case 1: was never confirmed → fix it now
@@ -1278,15 +1336,19 @@ async def subscribe_advisory(
         if existing_profile != profile:
             needs_update = True
 
+        # Case 3: language changed → update it
+        if existing_lang != lang:
+            needs_update = True
+
         if needs_update:
             cursor.execute(
-                "UPDATE aqi_subscriptions SET profile = ?, confirmed = 1, last_alerted_aqi = 0.0 WHERE id = ?",
-                (profile, existing_id)
+                "UPDATE aqi_subscriptions SET profile = ?, lang = ?, confirmed = 1, last_alerted_aqi = 0.0 WHERE id = ?",
+                (profile, lang, existing_id)
             )
             conn.commit()
             conn.close()
             print(f"[SUBSCRIBE] Updated existing subscription id={existing_id} "
-                  f"for {email} / {ward_id}: profile={profile}, confirmed=1")
+                  f"for {email} / {ward_id}: profile={profile}, lang={lang}, confirmed=1")
         else:
             conn.close()
 
@@ -1305,12 +1367,12 @@ async def subscribe_advisory(
     # ── New subscription (auto-confirmed) ────────────────────────────────
     token = str(uuid.uuid4())
     cursor.execute(
-        "INSERT INTO aqi_subscriptions (ward_id, profile, email, confirm_token, confirmed, created_at) VALUES (?, ?, ?, ?, 1, ?)",
-        (ward_id, profile, email, token, datetime.now(timezone.utc).isoformat())
+        "INSERT INTO aqi_subscriptions (ward_id, profile, email, confirm_token, confirmed, lang, created_at) VALUES (?, ?, ?, ?, 1, ?, ?)",
+        (ward_id, profile, email, token, lang, datetime.now(timezone.utc).isoformat())
     )
     conn.commit()
     conn.close()
-    print(f"[SUBSCRIBE] New subscription created for {email} | ward={ward_id} | profile={profile} | auto-confirmed=True")
+    print(f"[SUBSCRIBE] New subscription created for {email} | ward={ward_id} | profile={profile} | lang={lang} | auto-confirmed=True")
 
     # Send a welcome email (best-effort — the subscription is already active
     # regardless of whether this email is delivered).
@@ -1320,21 +1382,31 @@ async def subscribe_advisory(
     profile_label = PROFILE_LABELS.get(profile, profile.replace('_', ' ').title())
     threshold = {"asthma": 50, "sensitive": 100, "elderly": 100, "outdoor_worker": 100, "healthy_adult": 150}.get(profile, 100)
 
-    welcome_subject = f"\U0001F514 AQI alerts activated for {city_name}"
+    # ── Multi-language Translation for Welcome Email ─────────────────────
+    welcome_subject = _translate_text(f"AQI alerts activated for {city_name}", lang)
+    h2_text = _translate_text("Your AQI Alert Subscription is Active", lang)
+    p1_text = _translate_text(f"You will receive air quality alerts for {city_name} whenever the AQI exceeds {threshold} (your profile: {profile_label}).", lang)
+    p2_text = _translate_text("No further action is needed — alerts are already active.", lang)
+    what_next_header = _translate_text("What happens next?", lang)
+    li1 = _translate_text("We check AQI levels every hour", lang)
+    li2 = _translate_text(f"If AQI exceeds {threshold}, you'll get a detailed alert email", lang)
+    li3 = _translate_text("Each alert includes pollutant breakdown and health guidance for your profile", lang)
+    unsubscribe_text = _translate_text("Don't want these alerts? Unsubscribe", lang)
+
     welcome_html = f"""
     <div style="font-family: Arial, sans-serif; padding: 20px; color: #1e293b; max-width: 600px; margin: 0 auto;">
-        <h2 style="color: #3b82f6;">\U00002705 Your AQI Alert Subscription is Active</h2>
-        <p>You will receive air quality alerts for <strong>{city_name}</strong> whenever the AQI exceeds <strong>{threshold}</strong> (your profile: {profile_label}).</p>
-        <p style="font-size: 14px; color: #475569;">No further action is needed — alerts are already active.</p>
+        <h2 style="color: #3b82f6;">\U00002705 {h2_text}</h2>
+        <p>{p1_text}</p>
+        <p style="font-size: 14px; color: #475569;">{p2_text}</p>
         <div style="margin: 20px 0; padding: 14px; background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px;">
-            <strong style="color: #166534;">What happens next?</strong>
+            <strong style="color: #166534;">{what_next_header}</strong>
             <ul style="color: #334155; margin: 8px 0 0 0; padding-left: 20px;">
-                <li>We check AQI levels every hour</li>
-                <li>If AQI exceeds {threshold}, you'll get a detailed alert email</li>
-                <li>Each alert includes pollutant breakdown and health guidance for your profile</li>
+                <li>{li1}</li>
+                <li>{li2}</li>
+                <li>{li3}</li>
             </ul>
         </div>
-        <p style="font-size: 12px; color: #94a3b8;">Don't want these alerts? <a href="{unsubscribe_url}" style="color: #94a3b8;">Unsubscribe</a></p>
+        <p style="font-size: 12px; color: #94a3b8;"><a href="{unsubscribe_url}" style="color: #94a3b8; text-decoration: underline;">{unsubscribe_text}</a></p>
     </div>
     """
 
@@ -1477,12 +1549,14 @@ async def send_aqi_alerts(base_url: str = "http://localhost:7860"):
         city_name = CITIES.get(ward_id, {}).get("name", ward_id.capitalize())
         trend_delta = current_aqi - last_alerted if last_alerted else 0.0
 
-        # ── Fetch dynamic precautions ─────────────────────────────────────
+        # ── Fetch dynamic precautions in target language ──────────────────
+        sub_lang = row["lang"] if "lang" in row.keys() else "en"
         guidance = await _get_dynamic_guidance(
             profile=profile,
             current_aqi=current_aqi,
             city_name=city_name,
-            pollutants=pollutants
+            pollutants=pollutants,
+            lang=sub_lang
         )
 
         subject, html_body = _build_alert_email(
@@ -1493,7 +1567,8 @@ async def send_aqi_alerts(base_url: str = "http://localhost:7860"):
             trend_delta=trend_delta,
             dashboard_url=base_url,
             unsubscribe_url=f"{base_url}/api/advisory/unsubscribe?token={row['confirm_token']}",
-            guidance=guidance
+            guidance=guidance,
+            lang=sub_lang
         )
 
         sent_ok = _send_email(email, subject, html_body)

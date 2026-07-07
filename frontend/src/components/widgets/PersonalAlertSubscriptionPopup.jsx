@@ -44,7 +44,7 @@ export default function PersonalAlertSubscriptionPopup({
     if (!selectedWard || !emailAddress) return;
     setSubscribing(true);
     try {
-      const response = await fetch(`/api/advisory/subscribe?ward_id=${selectedWard.id}&profile=${personalProfile}&email=${encodeURIComponent(emailAddress)}`, {
+      const response = await fetch(`/api/advisory/subscribe?ward_id=${selectedWard.id}&profile=${personalProfile}&email=${encodeURIComponent(emailAddress)}&lang=${lang}`, {
         method: 'POST'
       });
       const data = await response.json();
