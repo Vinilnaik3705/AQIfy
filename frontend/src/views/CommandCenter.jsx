@@ -178,7 +178,7 @@ export default function CommandCenter({ state, selectedWard, forecast, onSelectW
                   >
                     <Popup>
                       <div>
-                        <strong>{placeLabel}</strong><br />
+                        <strong data-notranslate>{placeLabel}</strong><br />
                         AQI: <strong style={{ color: aqiColor(aqiVal) }}>{aqiVal}</strong>
                       </div>
                     </Popup>
@@ -202,7 +202,7 @@ export default function CommandCenter({ state, selectedWard, forecast, onSelectW
                   >
                     <Popup>
                       <div>
-                        <strong>{cp.name}</strong><br />
+                        <strong data-notranslate>{cp.name}</strong><br />
                         AQI: <strong style={{ color: aqiColor(aqiVal) }}>{aqiVal}</strong>
                       </div>
                     </Popup>
@@ -475,7 +475,7 @@ export default function CommandCenter({ state, selectedWard, forecast, onSelectW
         {selectedWard && (
           <div className="detailed-city-view">
             <div>
-              <h3 className="detailed-hourly-title">Hourly weather & air quality forecast for {selectedCityName}</h3>
+              <h3 className="detailed-hourly-title">Hourly weather & air quality forecast for <span data-notranslate>{selectedCityName}</span></h3>
               <div style={{ fontSize: '11px', color: '#64748b', marginTop: '2px', marginBottom: '12px' }}>
                 Projections for the next 72 hours based on localized atmospheric modeling.
               </div>
@@ -615,9 +615,9 @@ export default function CommandCenter({ state, selectedWard, forecast, onSelectW
             {/* Header: Location */}
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
               <MapPin size={16} color="#e11d48" style={{ flexShrink: 0 }} />
-              <span style={{ fontSize: '16px', fontWeight: '800', color: '#0f172a' }}>{selectedWard.name}</span>
+              <span data-notranslate style={{ fontSize: '16px', fontWeight: '800', color: '#0f172a' }}>{selectedWard.name}</span>
             </div>
-            <div style={{ fontSize: '12px', color: '#64748b', marginLeft: '24px', marginBottom: '16px' }}>
+            <div data-notranslate style={{ fontSize: '12px', color: '#64748b', marginLeft: '24px', marginBottom: '16px' }}>
               {selectedWard.state ? `${selectedWard.state}, ` : ''}{selectedWard.country || 'India'}
             </div>
 

@@ -87,7 +87,7 @@ export default function EnforcementView({ dispatches, onRefresh, onViewEvidence 
                     }}
                   >
                     <div>
-                      <div style={{ fontSize: '13px', fontWeight: '750', color: '#0f172a' }}>{item.ward_name}</div>
+                      <div data-notranslate style={{ fontSize: '13px', fontWeight: '750', color: '#0f172a' }}>{item.ward_name}</div>
                       <div style={{ fontSize: '11px', color: '#64748b', marginTop: '2px' }}>
                         Dominant: {item.dominant_pollutant}
                       </div>
@@ -119,7 +119,7 @@ export default function EnforcementView({ dispatches, onRefresh, onViewEvidence 
                 {/* Header info */}
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '16px', paddingBottom: '12px', borderBottom: '1.5px solid #f1f5f9' }}>
                   <div>
-                    <div style={{ fontSize: '15px', fontWeight: '800', color: '#0f172a' }}>{activeItem.ward_name}</div>
+                    <div data-notranslate style={{ fontSize: '15px', fontWeight: '800', color: '#0f172a' }}>{activeItem.ward_name}</div>
                     <div style={{ fontSize: '11px', color: '#64748b', marginTop: '4px' }}>
                       Priority Score: <strong>{activeItem.priority_score}</strong> · Severity: <strong>{activeItem.severity?.replace('_', ' ').toUpperCase()}</strong>
                     </div>

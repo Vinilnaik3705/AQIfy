@@ -456,7 +456,14 @@ class EnforcementAgent:
                 "inferred_sources": inferred_sources,
                 "vulnerability_flags": vuln_flags,
                 "nearby_sources": nearby,
-                "recommended_actions": self._recommend(severity, nearby, pollutants),
+                "recommended_actions": self._recommend(
+                    severity, nearby, pollutants,
+                    ward_name=ward["name"] if ward else "Unknown",
+                    ward_id=reading["ward_id"],
+                    aqi=reading["aqi"],
+                    vuln_flags=vuln_flags,
+                    inferred_sources=inferred_sources,
+                ),
                 "status": "pending",
                 "evidence": {
                     "aqi_reading": reading["aqi"],
@@ -478,10 +485,27 @@ class EnforcementAgent:
         }
 
     @staticmethod
-    def _recommend(severity: str, nearby: List[Dict[str, Any]], pollutants: Dict[str, float]) -> List[str]:
+    def _recommend(
+        severity: str,
+        nearby: List[Dict[str, Any]],
+        pollutants: Dict[str, float],
+        ward_name: str = "Unknown",
+        ward_id: str = "",
+        aqi: float = 0,
+        vuln_flags: List[str] = None,
+        inferred_sources: List[str] = None,
+    ) -> List[str]:
+        """Generate detailed, context-rich, ward-specific enforcement actions
+        with legal references, responsible departments, quantified impact estimates,
+        and time-bound deadlines."""
+        import calendar
+        from datetime import datetime
+
         actions: List[str] = []
         cats = {s["category"] for s in nearby}
-        
+        vuln_flags = vuln_flags or []
+        inferred_sources = inferred_sources or []
+
         pm25 = pollutants.get("pm25", 0.0)
         pm10 = pollutants.get("pm10", 0.0)
         no2 = pollutants.get("no2", 0.0)
@@ -489,67 +513,304 @@ class EnforcementAgent:
         o3 = pollutants.get("o3", 0.0)
         co = pollutants.get("co", 0.0)
 
-        # 1. Source-specific actions based on nearby registered emission sources
+        # ── Context awareness ──
+        now = datetime.now()
+        month = now.month
+        month_name = calendar.month_name[month]
+
+        # Determine if this is a Delhi NCT ward (GRAP-applicable)
+        is_delhi_nct = ward_id.startswith("delhi") or "delhi" in ward_name.lower()
+        is_ncr = is_delhi_nct or any(
+            k in ward_id.lower() for k in ["noida", "ghaziabad", "faridabad", "gurugram"]
+        )
+        # Indo-Gangetic Plain stubble corridor (Oct–Nov)
+        is_stubble_season = month in (10, 11)
+        is_igp = is_ncr or any(
+            k in ward_id.lower()
+            for k in ["lucknow", "kanpur", "patna", "varanasi", "agra", "chandigarh", "amritsar"]
+        )
+        # Dry/dusty season (Mar–Jun)
+        is_dry_season = month in (3, 4, 5, 6)
+        # Festival season (Oct–Nov) — Diwali firecrackers
+        is_festival_season = month in (10, 11)
+
+        # Determine responsible regulatory body
+        if is_delhi_nct:
+            pcb = "DPCC (Delhi Pollution Control Committee)"
+            muni = "MCD (Municipal Corporation of Delhi)"
+            traffic = "Delhi Traffic Police"
+        elif "mumbai" in ward_id.lower() or "maharashtra" in ward_name.lower():
+            pcb = "MPCB (Maharashtra Pollution Control Board)"
+            muni = "BMC (Brihanmumbai Municipal Corporation)"
+            traffic = "Mumbai Traffic Police"
+        elif "bengaluru" in ward_id.lower() or "karnataka" in ward_name.lower():
+            pcb = "KSPCB (Karnataka State PCB)"
+            muni = "BBMP (Bruhat Bengaluru Mahanagara Palike)"
+            traffic = "Bengaluru Traffic Police"
+        elif "chennai" in ward_id.lower() or "tamil" in ward_name.lower():
+            pcb = "TNPCB (Tamil Nadu PCB)"
+            muni = "GCC (Greater Chennai Corporation)"
+            traffic = "Chennai Traffic Police"
+        elif "hyderabad" in ward_id.lower() or "telangana" in ward_name.lower():
+            pcb = "TSPCB (Telangana State PCB)"
+            muni = "GHMC (Greater Hyderabad Municipal Corporation)"
+            traffic = "Hyderabad Traffic Police"
+        elif "kolkata" in ward_id.lower() or "bengal" in ward_name.lower():
+            pcb = "WBPCB (West Bengal PCB)"
+            muni = "KMC (Kolkata Municipal Corporation)"
+            traffic = "Kolkata Traffic Police"
+        else:
+            pcb = "State Pollution Control Board (SPCB)"
+            muni = "Municipal Corporation"
+            traffic = "Local Traffic Police"
+
+        # ── 1. GRAP stage actions for Delhi-NCR ──
+        if is_ncr and aqi >= 301:
+            grap_stage = "IV (Severe+)" if aqi >= 401 else "III (Severe)"
+            actions.append(
+                f"[GRAP STAGE {grap_stage}] Invoke Commission for Air Quality Management (CAQM) "
+                f"emergency protocol for {ward_name}: Ban entry of non-essential trucks into city limits, "
+                f"halt all construction/demolition activities, and mandate 50% WFH for government offices. "
+                f"Responsible: {pcb} + CAQM. Legal basis: CAQM Act 2021, Section 12. "
+                f"Expected impact: AQI reduction of 30–80 points within 48–72 hours."
+            )
+        elif is_ncr and aqi >= 201:
+            actions.append(
+                f"[GRAP STAGE II (Very Poor)] Activate enhanced dust suppression and mechanical sweeping across {ward_name}. "
+                f"Ban use of coal/firewood in tandoors and open eateries. Intensify CNG enforcement for autos/taxis. "
+                f"Responsible: {pcb}. Legal basis: GRAP Revised 2024, Stage II directives. "
+                f"Expected impact: AQI reduction of 15–40 points within 24–48 hours."
+            )
+
+        # ── 2. Source-specific actions (detailed, with departments and legal basis) ──
         if "industrial" in cats:
+            industrial_nearby = [s for s in nearby if s["category"] == "industrial"]
+            count = len(industrial_nearby)
+            total_q = sum(s.get("Q", s.get("emission_rate_Q", 0)) for s in industrial_nearby)
             if severity in ("severe", "very_poor"):
-                actions.append("EMERGENCY AUDIT: Halt operations of non-compliant boilers and solid-fuel combustion in nearby industrial units.")
+                actions.append(
+                    f"EMERGENCY INDUSTRIAL AUDIT in {ward_name}: Immediately inspect and issue show-cause notices "
+                    f"to {count} industrial unit(s) within 5 km (combined emission rate: {total_q:.1f} g/s). "
+                    f"Verify stack emission compliance, ban pet coke/FO usage, enforce bag filters and ESPs. "
+                    f"Responsible: {pcb}. Legal basis: Air (Prevention & Control of Pollution) Act 1981, Section 21. "
+                    f"Timeline: Inspection within 24 hours, compliance report within 72 hours. "
+                    f"Expected impact: 20–50 µg/m³ PM2.5 reduction if non-compliant units are identified."
+                )
             else:
-                actions.append("Routine stack emission inspection and fuel log audit of local industrial units.")
-        
+                actions.append(
+                    f"Schedule routine emission audit for {count} industrial unit(s) near {ward_name} "
+                    f"(combined emission rate: {total_q:.1f} g/s). Verify OCEMS (Online Continuous Emission Monitoring) "
+                    f"data compliance and stack emission certificates. "
+                    f"Responsible: {pcb}. Legal basis: CPCB emission standards notification, 2019. "
+                    f"Timeline: Audit within 7 working days."
+                )
+
         if "construction" in cats:
+            construction_nearby = [s for s in nearby if s["category"] == "construction"]
+            count = len(construction_nearby)
             if severity in ("severe", "very_poor"):
-                actions.append("TOTAL BAN: Order suspension of all open excavation, demolition, and dry construction activities.")
+                actions.append(
+                    f"HALT ALL CONSTRUCTION in {ward_name}: Issue stop-work orders to {count} construction site(s) "
+                    f"within 5 km. No excavation, demolition, or dry mixing permitted until AQI drops below 300. "
+                    f"Enforce mandatory green netting, anti-smog guns, and material cover for all sites. "
+                    f"Responsible: {muni} + {pcb}. Legal basis: NGT Order dated 04.12.2021 on construction dust. "
+                    f"Penalty: ₹50,000–5,00,000 under Environment Protection Act, 1986. "
+                    f"Expected impact: 15–35 µg/m³ PM10 reduction within 24 hours."
+                )
             else:
-                actions.append("Enforce construction site dust mitigation measures (water spraying, wind barriers, material covers).")
+                actions.append(
+                    f"Enforce construction dust mitigation at {count} site(s) near {ward_name}: "
+                    f"Mandatory water sprinkling every 2 hours, wind-break barriers (min 10m height), "
+                    f"covered material transport, wheel-wash facilities at entry/exit points. "
+                    f"Responsible: {muni}. Legal basis: CPCB Construction & Demolition Guidelines 2017. "
+                    f"Timeline: Compliance check within 48 hours."
+                )
 
         if "vehicular" in cats:
             if severity in ("severe", "very_poor"):
-                actions.append("TRAFFIC RESTRICTION: Implement commercial diesel vehicle bans and odd-even vehicle rotation in hotspot sectors.")
+                actions.append(
+                    f"TRAFFIC EMERGENCY in {ward_name}: Deploy {traffic} to enforce strict no-idling zones "
+                    f"at all major junctions. Ban entry of BS-III and below diesel vehicles, "
+                    f"implement odd-even vehicle rotation if AQI persists above 400 for 48h. "
+                    f"Activate dedicated green corridors for public transport. "
+                    f"Responsible: {traffic} + Transport Dept. Legal basis: CMVR (Central Motor Vehicles Rules), "
+                    f"Section 190(2) of MV Act 1988 for emission violations. "
+                    f"Expected impact: 10–25 µg/m³ NO₂ reduction within 24 hours."
+                )
             else:
-                actions.append("Conduct emission compliance drives and target heavy-traffic junctions to minimize vehicle idling.")
+                actions.append(
+                    f"Conduct targeted vehicle emission checks in {ward_name}: Focus on commercial diesel vehicles "
+                    f"(trucks, buses, 3-wheelers) at major intersections and transport hubs. "
+                    f"Issue on-the-spot challans for visibly polluting vehicles (PUC non-compliant). "
+                    f"Responsible: {traffic}. Legal basis: Section 190(2) MV Act 1988 + CPCB BS-VI norms. "
+                    f"Timeline: Daily enforcement drives for the next 7 days."
+                )
 
         if "waste_burning" in cats:
             if severity in ("severe", "very_poor"):
-                actions.append("CRIMINAL ENFORCEMENT: Prosecute illegal open waste burning at dump sites with maximum statutory penalties.")
+                actions.append(
+                    f"ZERO-TOLERANCE ON BURNING in {ward_name}: Mobilize {muni} anti-burning squads "
+                    f"to patrol dump sites, vacant lots, and agricultural fringes. File FIRs for repeat offenders "
+                    f"under Section 278 IPC (making atmosphere noxious to health). "
+                    f"Deploy CCTV monitoring at identified burning hotspots. "
+                    f"Responsible: {muni} + Local Police. Legal basis: NGT solid waste burning ban + Section 278 IPC. "
+                    f"Expected impact: 25–60 µg/m³ PM2.5 reduction if active burning is suppressed."
+                )
             else:
-                actions.append("Deploy dedicated municipal patrols to identify and suppress localized garbage/leaf burning.")
+                actions.append(
+                    f"Intensify {muni} anti-burning patrols in {ward_name}: "
+                    f"Target open waste/garbage burning at community dumping points, roadsides, and vacant plots. "
+                    f"Issue spot fines (₹5,000–25,000) under Solid Waste Management Rules 2016. "
+                    f"Coordinate with RWA leaders to promote composting alternatives. "
+                    f"Timeline: Daily patrols at dawn (5–7 AM) and dusk (5–7 PM) for the next 14 days."
+                )
 
-        # 2. Pollutant-specific actions (essential when there are no nearby registered sources)
-        # Handle particulate matter (dust/smoke)
+        # ── 3. Pollutant-specific actions with quantified exceedances ──
         if pm25 > 60.0 or pm10 > 100.0:
+            pm25_mult = round(pm25 / 60.0, 1) if pm25 > 60 else 0
+            pm10_mult = round(pm10 / 100.0, 1) if pm10 > 100 else 0
             if severity in ("severe", "very_poor"):
-                actions.append("Deploy high-efficiency anti-smog water cannons and intensive mechanical sweepers on major road corridors.")
+                exceed_text = ""
+                if pm25_mult:
+                    exceed_text += f"PM2.5 at {pm25:.0f} µg/m³ ({pm25_mult}× safe limit)"
+                if pm10_mult:
+                    exceed_text += f"{' and ' if exceed_text else ''}PM10 at {pm10:.0f} µg/m³ ({pm10_mult}× safe limit)"
+                actions.append(
+                    f"EMERGENCY DUST SUPPRESSION in {ward_name}: {exceed_text}. "
+                    f"Deploy anti-smog guns (water mist cannons) and mechanical road sweepers on all arterial roads. "
+                    f"Mandatory water tanker spraying every 3 hours on unpaved stretches. "
+                    f"Responsible: {muni} + PWD. Timeline: Immediate deployment within 6 hours. "
+                    f"Expected impact: 20–40% reduction in ground-level particulate concentration within 12 hours."
+                )
             else:
-                actions.append("Deploy municipal water sprinklers to control dust on high-traffic roads.")
+                actions.append(
+                    f"Deploy road dust suppression in {ward_name}: PM2.5 = {pm25:.0f} µg/m³, PM10 = {pm10:.0f} µg/m³. "
+                    f"Schedule mechanical sweeping and water spraying on high-traffic roads during off-peak hours (11 PM–5 AM). "
+                    f"Ensure construction vehicles use covered transport for debris and sand. "
+                    f"Responsible: {muni}. Timeline: Within 24 hours."
+                )
 
-        # Handle combustion/traffic markers (NO2 / CO)
         if no2 > 40.0 or co > 2.0:
-            actions.append("Optimize traffic signal synchronization at congested intersections to lower localized exhaust build-up.")
+            actions.append(
+                f"TRAFFIC EMISSION HOTSPOT in {ward_name}: NO₂ = {no2:.1f} ppb (safe: 40), CO = {co:.2f} mg/m³. "
+                f"Optimize traffic signal phasing at the nearest 3 congested intersections to reduce stop-and-idle time by 30%. "
+                f"Designate low-emission zones (LEZs) restricting heavy diesel vehicles during 8 AM–10 AM and 5 PM–8 PM. "
+                f"Responsible: {traffic} + Smart City Control Room. "
+                f"Expected impact: 15–25% reduction in intersection-level NO₂ within 48 hours."
+            )
 
-        # Handle coal/refinery marker (SO2)
         if so2 > 40.0:
-            actions.append("Inspect fuel oil sulphur content at nearby commercial heating facilities and backup generators.")
+            actions.append(
+                f"INDUSTRIAL SO₂ ALERT in {ward_name}: SO₂ = {so2:.1f} ppb ({round(so2/40, 1)}× safe limit). "
+                f"Inspect fuel oil sulphur content at commercial boilers, brick kilns, and DG sets within 3 km radius. "
+                f"Verify sulphur content ≤ 0.5% as per IS 1460:2017 specification. "
+                f"Responsible: {pcb}. Legal basis: CPCB fuel quality standards. "
+                f"Timeline: Lab analysis results within 72 hours."
+            )
 
-        # Handle ground-level ozone (O3)
         if o3 > 100.0:
-            actions.append("Monitor VOC and NOx precursor sources (fuel stations, chemical storages) for leak compliance.")
-            if severity in ("severe", "very_poor"):
-                actions.append("Advise sensitive populations to restrict afternoon outdoor exposure during peak solar radiation.")
+            actions.append(
+                f"GROUND-LEVEL OZONE ALERT in {ward_name}: O₃ = {o3:.1f} ppb ({round(o3/50, 1)}× safe limit). "
+                f"Inspect VOC-emitting facilities (fuel stations, paint/chemical storage, dry cleaners) within 2 km "
+                f"for vapor recovery system compliance. Restrict asphalt paving during peak UV hours (11 AM–3 PM). "
+                f"Responsible: {pcb}. Legal basis: CPCB ambient air quality standards (O₃ 8-hr average). "
+                f"Expected impact: Reduced ozone precursor emissions; noticeable improvement in 2–3 days."
+            )
 
-        # 3. Defensive fallbacks if list is too short
-        if len(actions) < 2:
-            actions.append("Routine air quality monitoring and mechanical dust suppression.")
-        if len(actions) < 3:
-            actions.append("Deploy mobile air sensor vans to identify temporary sources.")
+        # ── 4. Seasonal & geographic context ──
+        if is_stubble_season and is_igp and pm25 > 80:
+            actions.append(
+                f"STUBBLE BURNING RESPONSE ({month_name}): Indo-Gangetic Plain biomass burning episode detected. "
+                f"PM2.5 at {pm25:.0f} µg/m³ in {ward_name} likely includes transboundary contribution. "
+                f"Activate emergency response: seal buildings near sensitive receptors (hospitals, schools), "
+                f"distribute N95 masks through Anganwadi centres, and increase public transit frequency "
+                f"to reduce private vehicle emissions during the compounded pollution event. "
+                f"Coordinate with CAQM for inter-state crop residue management enforcement."
+            )
 
-        # 4. Severity-based general public health safety directives
+        if is_dry_season and pm10 > 120:
+            actions.append(
+                f"DRY SEASON DUST ALERT ({month_name}): Elevated PM10 ({pm10:.0f} µg/m³) in {ward_name} "
+                f"likely amplified by low soil moisture and wind-blown dust. "
+                f"Intensify road watering frequency to every 2 hours on arterial roads, "
+                f"mandate green cover on exposed construction earth, and enforce truck-mounted covers "
+                f"for all sand/gravel transport vehicles. Responsible: {muni} + PWD."
+            )
+
+        if is_festival_season and pm25 > 100:
+            actions.append(
+                f"FESTIVAL SEASON ADVISORY ({month_name}): Enforce firecracker ban per Supreme Court "
+                f"order (Arjun Gopal vs Union of India, 2018) in {ward_name}. "
+                f"Only 'green crackers' (CSIR-approved, reduced emission) permitted between 8–10 PM. "
+                f"Deploy mobile monitoring units and CCTV at major celebration venues. "
+                f"Responsible: Local Police + {pcb}."
+            )
+
+        # ── 5. Vulnerability-specific actions ──
+        if vuln_flags:
+            has_hospitals = any("hospital" in f.lower() for f in vuln_flags)
+            has_schools = any("school" in f.lower() for f in vuln_flags)
+
+            if has_hospitals and severity in ("severe", "very_poor"):
+                actions.append(
+                    f"HEALTH FACILITY PROTECTION in {ward_name}: Install temporary HEPA air filtration "
+                    f"units in OPD waiting areas and ICUs of nearby hospitals. "
+                    f"Issue hospital-level air quality advisory to shift non-critical patients "
+                    f"to climate-controlled wards. Alert ambulance services for respiratory emergency surge. "
+                    f"Responsible: District Health Officer + Hospital Administration."
+                )
+
+            if has_schools and severity in ("severe", "very_poor"):
+                actions.append(
+                    f"SCHOOL PROTECTION in {ward_name}: Issue directive to suspend outdoor sports, "
+                    f"morning assemblies, and recess activities in all schools within 3 km. "
+                    f"Keep classrooms closed-window with air purifiers where available. "
+                    f"Consider temporary school closure if AQI exceeds 450 for 2 consecutive days. "
+                    f"Responsible: District Education Officer + School Management."
+                )
+
+        # ── 6. Severity-based public health directives ──
         if severity == "severe":
-            actions.insert(0, "URGENT: Issue health advisory advising citizens to remain indoors and restrict outdoor physical activity.")
+            actions.insert(0,
+                f"🚨 EMERGENCY PUBLIC HEALTH ALERT for {ward_name} — AQI {round(aqi)} (Severe): "
+                f"Issue immediate citizen advisory via SMS/loudspeaker: All outdoor physical activity prohibited. "
+                f"Schools/colleges to switch to online mode. Outdoor workers must be provided N95/N99 masks "
+                f"and 15-minute indoor rest breaks every hour. Vulnerable groups (elderly, pregnant, respiratory conditions) "
+                f"must remain indoors with air purifiers. Responsible: District Magistrate + {pcb}. "
+                f"Legal basis: Disaster Management Act 2005, Section 34."
+            )
         elif severity == "very_poor":
-            actions.insert(0, "Issue public warning advising N95 mask usage and avoiding strenuous outdoor exercise.")
+            actions.insert(0,
+                f"⚠️ PUBLIC HEALTH WARNING for {ward_name} — AQI {round(aqi)} (Very Poor): "
+                f"Advise citizens to wear N95 masks for any outdoor activity exceeding 15 minutes. "
+                f"Cancel outdoor public events and gatherings. Outdoor workers should limit exposure "
+                f"to 4-hour shifts with mandatory indoor breaks. Sensitive groups (children, elderly, "
+                f"asthma patients) should avoid all non-essential outdoor time. Responsible: {pcb}."
+            )
         elif severity == "poor":
-            actions.insert(0, "Issue health advisory advising sensitive individuals to limit prolonged outdoor exposure.")
-            
+            actions.insert(0,
+                f"⚡ AIR QUALITY ADVISORY for {ward_name} — AQI {round(aqi)} (Poor): "
+                f"Issue general health advisory: Sensitive individuals (children under 14, adults over 65, "
+                f"people with respiratory/cardiac conditions) should limit prolonged outdoor exertion. "
+                f"Recommend use of masks during peak traffic hours (8–10 AM, 5–8 PM). "
+                f"Responsible: {pcb}."
+            )
+
+        # ── 7. Final safeguard: ensure at least 3 meaningful actions ──
+        if len(actions) < 2:
+            actions.append(
+                f"Deploy continuous ambient air quality monitoring in {ward_name} using mobile monitoring vans "
+                f"(equipped with PM2.5/PM10/NOx/SO₂ analyzers) to identify micro-hotspots and temporary sources. "
+                f"Responsible: {pcb}. Timeline: Station van within 48 hours; data reporting every 1 hour."
+            )
+        if len(actions) < 3:
+            actions.append(
+                f"Activate green infrastructure measures in {ward_name}: Intensify tree plantation drives "
+                f"along major road corridors (minimum 10 saplings per 100m), install mist-based dust suppression "
+                f"systems at high-footfall intersections, and paint rooftops with solar-reflective coatings "
+                f"to reduce urban heat island contribution. Responsible: {muni} + Forest Department."
+            )
+
         return actions
 
 

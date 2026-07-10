@@ -1758,27 +1758,40 @@ async def translate_texts(request: Request):
         try:
             translator = GoogleTranslator(source='en', target=target)
             translated_map = {}
-            
-            # Fast path: join with newlines to translate in a single HTTP request
-            joined_text = "\n".join(unique_texts)
-            translated_joined = translator.translate(joined_text)
-            
-            # Split and clean up lines
-            translated_parts = [p.strip() for p in translated_joined.split("\n")] if translated_joined else []
-            
-            # If the count matches, map them directly
-            if len(translated_parts) == len(unique_texts):
-                for orig, trans in zip(unique_texts, translated_parts):
-                    translated_map[orig] = trans or orig
-                    _translation_cache[(orig, target)] = trans or orig
-            else:
-                # Fallback: translate using batch translation in chunks of 50
-                for chunk_start in range(0, len(unique_texts), 50):
-                    chunk = unique_texts[chunk_start:chunk_start + 50]
-                    translated = translator.translate_batch(chunk)
-                    for orig, trans in zip(chunk, translated):
+
+            # Strategy 1: Use a unique delimiter to keep texts aligned.
+            # Google Translate preserves numbered markers better than bare newlines.
+            DELIM = " ||| "
+            if len(unique_texts) <= 80:
+                joined_text = DELIM.join(unique_texts)
+                translated_joined = translator.translate(joined_text)
+                
+                # Split by the delimiter (Google Translate usually preserves |||)
+                translated_parts = [p.strip() for p in translated_joined.split("|||")] if translated_joined else []
+                
+                if len(translated_parts) == len(unique_texts):
+                    for orig, trans in zip(unique_texts, translated_parts):
                         translated_map[orig] = trans or orig
                         _translation_cache[(orig, target)] = trans or orig
+                else:
+                    # Delimiter approach failed — fall back to one-by-one translation
+                    # This is slower but guarantees correct alignment
+                    for orig in unique_texts:
+                        try:
+                            trans = translator.translate(orig)
+                            translated_map[orig] = trans or orig
+                            _translation_cache[(orig, target)] = trans or orig
+                        except Exception:
+                            translated_map[orig] = orig
+            else:
+                # Large batch: translate individually to avoid misalignment
+                for orig in unique_texts:
+                    try:
+                        trans = translator.translate(orig)
+                        translated_map[orig] = trans or orig
+                        _translation_cache[(orig, target)] = trans or orig
+                    except Exception:
+                        translated_map[orig] = orig
         except Exception as e:
             print(f"Translation error: {e}")
             # Fallback: return originals
