@@ -133,7 +133,7 @@ function HeaderSearch({ onSelectPlace, wards = [], onSelectWard }) {
 
 function LanguageSelector({ onLanguageChange }) {
   const [open, setOpen] = useState(false)
-  const [selected, setSelected] = useState(() => safeLocalStorage.getItem('aqify_lang') || 'en')
+  const [selected, setSelected] = useState('en')
   const [translating, setTranslating] = useState(false)
   const ref = useRef(null)
   const observerRef = useRef(null)
@@ -183,18 +183,6 @@ function LanguageSelector({ onLanguageChange }) {
     }
     setTranslating(false)
   }, [])
-
-  // Auto-apply saved language on first load
-  useEffect(() => {
-    const saved = safeLocalStorage.getItem('aqify_lang')
-    if (saved && saved !== 'en') {
-      const timer = setTimeout(() => {
-        translatePage(saved)
-        if (onLanguageChange) onLanguageChange(saved)
-      }, 2000)
-      return () => clearTimeout(timer)
-    }
-  }, [onLanguageChange, translatePage])
 
   const handleSelect = async (langCode) => {
     setSelected(langCode)

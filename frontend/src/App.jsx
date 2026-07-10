@@ -35,7 +35,7 @@ export default function App() {
 
   // Advisory state
   const [advisory, setAdvisory] = useState(null)
-  const [advLang, setAdvLang] = useState(() => safeLocalStorage.getItem('aqify_lang') || 'en')
+  const [advLang, setAdvLang] = useState('en')
   const [advProfile, setAdvProfile] = useState('healthy_adult')
   const [isAdvisoryOpen, setIsAdvisoryOpen] = useState(false)
   const [isAlertSubscriptionOpen, setIsAlertSubscriptionOpen] = useState(false)
@@ -205,6 +205,11 @@ export default function App() {
       ...ward,
       weather: { temperature_c: null, wind_speed_kmh: null, loading: true },
     })
+
+    if (ward.center) {
+      setTargetCenter(ward.center)
+      setTargetZoom(10)
+    }
 
     const data = await fetchJSON(`/api/aqi-details?lat=${ward.center[0]}&lng=${ward.center[1]}&name=${encodeURIComponent(ward.name)}&country=${encodeURIComponent(ward.country || '')}&state=${encodeURIComponent(ward.state || '')}`)
     if (data) {
