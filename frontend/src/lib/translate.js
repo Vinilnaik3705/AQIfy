@@ -29,6 +29,10 @@ export function getOriginal(node) {
   return originalTexts.get(node)
 }
 
+export function setOriginal(node, text) {
+  originalTexts.set(node, text)
+}
+
 export function restoreOriginals() {
   originalTexts.forEach((orig, node) => {
     try {

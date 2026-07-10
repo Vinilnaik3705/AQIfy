@@ -6,7 +6,7 @@ import { LANGUAGES } from '../lib/constants'
 import { safeLocalStorage } from '../lib/api'
 import {
   getActiveLang, setActiveLang, resetTranslations, getTranslation,
-  hasOriginal, getOriginal, restoreOriginals, getTextNodes, translateNodes,
+  hasOriginal, getOriginal, setOriginal, restoreOriginals, getTextNodes, translateNodes,
 } from '../lib/translate'
 
 function HeaderSearch({ onSelectPlace, wards = [], onSelectWard }) {
@@ -150,8 +150,24 @@ function LanguageSelector({ onLanguageChange }) {
   useEffect(() => {
     const root = document.getElementById('root')
     if (!root) return
-    observerRef.current = new MutationObserver(() => {
+    observerRef.current = new MutationObserver((mutations) => {
       if (getActiveLang() === 'en') return
+
+      // Sync original text cache when React updates DOM nodes
+      mutations.forEach(m => {
+        if (m.type === 'characterData') {
+          const node = m.target
+          const currentText = node.textContent.trim()
+          const orig = getOriginal(node)
+          if (orig) {
+            const trans = getTranslation(orig.trim())
+            if (currentText && currentText !== trans) {
+              setOriginal(node, node.textContent)
+            }
+          }
+        }
+      })
+
       clearTimeout(observerRef.current._timer)
       observerRef.current._timer = setTimeout(() => {
         const nodes = getTextNodes(root)
