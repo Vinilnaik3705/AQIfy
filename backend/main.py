@@ -1758,40 +1758,16 @@ async def translate_texts(request: Request):
         try:
             translator = GoogleTranslator(source='en', target=target)
             translated_map = {}
-
-            # Strategy 1: Use a unique delimiter to keep texts aligned.
-            # Google Translate preserves numbered markers better than bare newlines.
-            DELIM = " ||| "
-            if len(unique_texts) <= 80:
-                joined_text = DELIM.join(unique_texts)
-                translated_joined = translator.translate(joined_text)
-                
-                # Split by the delimiter (Google Translate usually preserves |||)
-                translated_parts = [p.strip() for p in translated_joined.split("|||")] if translated_joined else []
-                
-                if len(translated_parts) == len(unique_texts):
-                    for orig, trans in zip(unique_texts, translated_parts):
-                        translated_map[orig] = trans or orig
-                        _translation_cache[(orig, target)] = trans or orig
-                else:
-                    # Delimiter approach failed — fall back to one-by-one translation
-                    # This is slower but guarantees correct alignment
-                    for orig in unique_texts:
-                        try:
-                            trans = translator.translate(orig)
-                            translated_map[orig] = trans or orig
-                            _translation_cache[(orig, target)] = trans or orig
-                        except Exception:
-                            translated_map[orig] = orig
-            else:
-                # Large batch: translate individually to avoid misalignment
-                for orig in unique_texts:
-                    try:
-                        trans = translator.translate(orig)
-                        translated_map[orig] = trans or orig
-                        _translation_cache[(orig, target)] = trans or orig
-                    except Exception:
-                        translated_map[orig] = orig
+            
+            # Use translate_batch in chunks of 50 to avoid rate/size limits
+            # This is fast, keeps exact order, and never misaligns
+            chunk_size = 50
+            for i in range(0, len(unique_texts), chunk_size):
+                chunk = unique_texts[i:i + chunk_size]
+                translated_chunk = translator.translate_batch(chunk)
+                for orig, trans in zip(chunk, translated_chunk):
+                    translated_map[orig] = trans or orig
+                    _translation_cache[(orig, target)] = trans or orig
         except Exception as e:
             print(f"Translation error: {e}")
             # Fallback: return originals

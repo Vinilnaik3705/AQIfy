@@ -83,7 +83,7 @@ export default function EvidenceModal({ data, onClose }) {
             </div>
 
             <div style={{ flex: 1 }}>
-              <div data-notranslate style={{ fontSize: '22px', fontWeight: '850', color: '#0f172a', marginBottom: '8px', letterSpacing: '-0.5px' }}>{data.ward_name}</div>
+              <div style={{ fontSize: '22px', fontWeight: '850', color: '#0f172a', marginBottom: '8px', letterSpacing: '-0.5px' }}>{data.ward_name}</div>
               <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '8px' }}>
                 <span style={{
                   padding: '5px 12px', borderRadius: '10px', fontSize: '11px',

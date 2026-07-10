@@ -118,7 +118,7 @@ function HeaderSearch({ onSelectPlace, wards = [], onSelectWard }) {
               }}
             >
               <MapPin size={12} color="#64748b" />
-              <span data-notranslate style={{ textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }}>
+              <span style={{ textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }}>
                 <strong>{r.name}</strong>
                 {(r.state || r.admin1) && `, ${r.state || r.admin1}`}
                 {r.country && ` (${r.country})`}
