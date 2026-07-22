@@ -31,7 +31,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, RedirectResponse
 
-from simulation import SimulationEngine, CITIES, DEFAULT_CITY, get_sources_for_city
+from simulation import SimulationEngine, CITIES, DEFAULT_CITY, get_sources_for_city, sim
 from agents import (
     AttributionAgent,
     PredictiveAgent,
@@ -639,7 +639,7 @@ app.add_middleware(
 
 # ── Singletons ────────────────────────────────────────────────────────────────
 
-sim = SimulationEngine()
+# sim imported from simulation
 attribution_agent = AttributionAgent()
 predictive_agent = PredictiveAgent()
 enforcement_agent = EnforcementAgent()
@@ -1015,24 +1015,25 @@ async def get_forecast(
                 # For sub-localities: scale the parent ML prediction by the ratio of the
                 # ward's own raw AQI to the parent's raw AQI, preserving genuine local differences.
                 # All scaled AQI figures are capped at 500.0 in accordance with the Indian NAQI scale.
-                if w_id != lookup_key and ml_hour_data["open_meteo_raw"] > 0:
+                if w_id != lookup_key and ml_hour_data.get("open_meteo_raw", 0) > 0:
                     scale = own_open_meteo_raw / ml_hour_data["open_meteo_raw"]
-                    scaled_aqi = min(round(ml_hour_data["predicted_aqi"] * scale, 1), 500.0)
-                    scaled_mitigated = min(round(ml_hour_data.get("mitigated_aqi", ml_hour_data["predicted_aqi"]) * scale, 1), 500.0)
-                    scaled_low = min(round(ml_hour_data["confidence_low"] * scale, 1), 500.0)
-                    scaled_high = min(round(ml_hour_data["confidence_high"] * scale, 1), 500.0)
+                    scale = max(0.6, min(1.8, scale))
+                    scaled_aqi = max(15.0, min(round(ml_hour_data["predicted_aqi"] * scale, 1), 500.0))
+                    scaled_mitigated = max(15.0, min(round(ml_hour_data.get("mitigated_aqi", ml_hour_data["predicted_aqi"]) * scale, 1), 500.0))
+                    scaled_low = max(15.0, min(round(ml_hour_data["confidence_low"] * scale, 1), 500.0))
+                    scaled_high = max(15.0, min(round(ml_hour_data["confidence_high"] * scale, 1), 500.0))
                 else:
-                    scaled_aqi = min(ml_hour_data["predicted_aqi"], 500.0)
-                    scaled_mitigated = min(ml_hour_data.get("mitigated_aqi", ml_hour_data["predicted_aqi"]), 500.0)
-                    scaled_low = min(ml_hour_data["confidence_low"], 500.0)
-                    scaled_high = min(ml_hour_data["confidence_high"], 500.0)
+                    scaled_aqi = max(15.0, min(ml_hour_data["predicted_aqi"], 500.0))
+                    scaled_mitigated = max(15.0, min(ml_hour_data.get("mitigated_aqi", ml_hour_data["predicted_aqi"]), 500.0))
+                    scaled_low = max(15.0, min(ml_hour_data["confidence_low"], 500.0))
+                    scaled_high = max(15.0, min(ml_hour_data["confidence_high"], 500.0))
 
                 # Update ward fields with ML data
                 w["predicted_aqi"] = scaled_aqi
                 w["mitigated_aqi"] = scaled_mitigated
                 w["confidence"] = ml_hour_data["confidence"]
-                w["confidence_low"] = max(0.0, scaled_low)
-                w["confidence_high"] = min(500.0, scaled_high)
+                w["confidence_low"] = scaled_low
+                w["confidence_high"] = scaled_high
                 w["open_meteo_raw"] = round(own_open_meteo_raw, 1)
                 w["persistence_baseline"] = ml_hour_data["persistence_baseline"]
                 

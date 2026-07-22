@@ -60,7 +60,24 @@ export default function CommandCenter({ state, selectedWard, forecast, onSelectW
 
   const hourlyForecastData = Array.isArray(forecast) && forecast.length > 0
     ? forecast.slice(0, 72).map((entry, idx) => {
-        const wardForecast = entry?.wards?.find(w => w.ward_id === forecastWardId) ?? entry?.wards?.[0] ?? null;
+        let wardForecast = entry?.wards?.find(w => w.ward_id === forecastWardId);
+        if (!wardForecast && selectedWard?.center && entry?.wards?.length) {
+          const [sLat, sLng] = selectedWard.center;
+          let minDist = Infinity;
+          for (const w of entry.wards) {
+            if (w.center && w.center.length >= 2) {
+              const dist = Math.pow(w.center[0] - sLat, 2) + Math.pow(w.center[1] - sLng, 2);
+              if (dist < minDist) {
+                minDist = dist;
+                wardForecast = w;
+              }
+            }
+          }
+        }
+        if (!wardForecast) {
+          wardForecast = entry?.wards?.[0] ?? null;
+        }
+
         const dt = new Date(entry?.timestamp || mountedAt + idx * 3600000);
         const labelHour = dt.getHours();
         const timeLabel = idx === 0
@@ -68,7 +85,8 @@ export default function CommandCenter({ state, selectedWard, forecast, onSelectW
           : labelHour === 0
             ? dt.toLocaleDateString('en-US', { weekday: 'short' })
             : String(labelHour).padStart(2, '0') + ':00';
-        const hourlyAqi = idx === 0 ? Math.round(trendAqi) : Math.round(wardForecast?.predicted_aqi ?? trendAqi);
+        const rawVal = idx === 0 ? trendAqi : (wardForecast?.predicted_aqi ?? trendAqi);
+        const hourlyAqi = Math.max(15, Math.min(500, Math.round(rawVal || 15)));
         const forecastWind = Math.round(wardForecast?.wind_speed_kmh ?? windKmh);
         const isNight = labelHour < 6 || labelHour > 18;
 

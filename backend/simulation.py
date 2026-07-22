@@ -419,22 +419,23 @@ def calibrate_india_pollutants(pm25_raw: float, pm10_raw: float, no2_raw: float,
 
 
     pm25_raw = pm25_raw or 0.0
-
     pm10_raw = pm10_raw or 0.0
-
     if pm25_raw > 30.0:
-
         pm25_cal = 30.0 + (pm25_raw - 30.0) * 0.70
-
     else:
-
         pm25_cal = pm25_raw
 
-    pm10_cal = min(pm10_raw, pm25_cal * 2.5)
-
-
+    if pm10_raw > 0:
+        pm10_cal = pm10_raw
+        if pm25_cal > 0:
+            pm10_cal = min(pm10_raw, pm25_cal * 3.5)
+    elif pm25_cal > 0:
+        pm10_cal = pm25_cal * 1.8
+    else:
+        pm10_cal = 0.0
 
     return {"pm25": pm25_cal, "pm10": pm10_cal, "no2": no2, "so2": so2, "co": co, "o3": o3}
+
 
 
 
@@ -583,34 +584,26 @@ def calculate_indian_aqi(pm25: float, pm10: float, no2: float, so2: float, co: f
 
 
     indices = []
-
     if pm25 > 0:
-
         indices.append(_calculate_sub_index(pm25, pm25_bp))
-
     if pm10 > 0:
-
         indices.append(_calculate_sub_index(pm10, pm10_bp))
-
     if no2 > 0:
-
         indices.append(_calculate_sub_index(no2, no2_bp))
-
     if so2 > 0:
-
         indices.append(_calculate_sub_index(so2, so2_bp))
-
     if co > 0:
-
         indices.append(_calculate_sub_index(co, co_bp))
-
     if o3 > 0:
-
         indices.append(_calculate_sub_index(o3, o3_bp))
 
+    if not indices:
+        return 25.0
+
+    res = max(indices)
+    return max(15.0, min(500.0, float(res)))
 
 
-    return max(indices) if indices else 0.0
 
 
 
@@ -2295,259 +2288,166 @@ class SimulationEngine:
 
 
         if city_key == "all":
+            all_keys = list(CITIES.keys())
 
-            # Only batch fetch parent cities to prevent timeouts
+            # 1. Multi-location Open-Meteo batch query for exact lat/lng of ALL cities & wards
+            lats = [str(CITIES[k]["center"][0]) for k in all_keys]
+            lngs = [str(CITIES[k]["center"][1]) for k in all_keys]
 
-            keys = list(CITIES.keys())
+            openmeteo_batch_data = {}
+            try:
+                url = AQ_API_URL
+                params = {
+                    "latitude": ",".join(lats),
+                    "longitude": ",".join(lngs),
+                    "current": "us_aqi,pm10,pm2_5,carbon_monoxide,nitrogen_dioxide,sulphur_dioxide,ozone",
+                }
+                resp = await HTTP_CLIENT.get(url, params=params)
+                if resp.status_code == 200:
+                    raw_data = resp.json()
+                    items = raw_data if isinstance(raw_data, list) else [raw_data]
+                    for k, item in zip(all_keys, items):
+                        curr = item.get("current", {})
+                        if curr:
+                            openmeteo_batch_data[k] = curr
+            except Exception as e:
+                safe_print("Open-Meteo multi-location batch fetch failed:", e)
 
-            live_keys = [k for k in keys if k in LIVE_CITIES and "_" not in k]
+            # 2. Parallel WAQI lookup for top parent cities & major hubs to overlay CPCB ground station truth
+            parent_keys = [k for k in all_keys if "_" not in k and k in LIVE_CITIES]
+            waqi_readings_map = {}
 
-            other_keys = [k for k in keys if k not in LIVE_CITIES or "_" in k]
-
-            
-
-            live_readings_map = {}
-
-            
-
-            async def fetch_city_reading(k, idx):
-
-                await asyncio.sleep(idx * 0.15)  # Stagger requests to prevent API burst limit blocks
-
+            async def fetch_waqi_parent(k):
                 lat_k, lng_k = CITIES[k]["center"]
+                w_data = await _fetch_real_aqi_waqi(lat_k, lng_k)
+                if w_data:
+                    waqi_readings_map[k] = w_data
 
-                aq_data = await _fetch_real_aqi(lat_k, lng_k)
+            await asyncio.gather(*(fetch_waqi_parent(k) for k in parent_keys), return_exceptions=True)
 
-                if aq_data:
+            # Check NCR ground baseline from Delhi if available
+            ncr_ground_aqi = None
+            if "delhi" in waqi_readings_map:
+                ncr_ground_aqi = waqi_readings_map["delhi"]["aqi"]
 
-                    pollutants = {
+            ncr_cities = {"delhi", "gurugram", "noida", "ghaziabad", "faridabad"}
 
-                        "pm25": aq_data["pm25"], "pm10": aq_data["pm10"], "no2": aq_data["no2"],
+            # 3. Assemble readings for every single key in CITIES
+            for k in all_keys:
+                lat_k, lng_k = CITIES[k]["center"]
+                parent_key = k.split("_")[0] if "_" in k else k
 
-                        "so2": aq_data["so2"], "co": aq_data["co"], "o3": aq_data["o3"]
+                read_source = "open-meteo cams (live)"
+                aq_data = None
 
+                # Check WAQI ground overlay first for parent city or ward match
+                if k in waqi_readings_map:
+                    aq_data = waqi_readings_map[k]
+                    read_source = aq_data.get("source", "waqi-cpcb (live)")
+                elif parent_key in waqi_readings_map and "_" in k:
+                    # Ward under parent city with WAQI ground station: scale model with parent ground ratio
+                    parent_waqi = waqi_readings_map[parent_key]
+                    cams_curr = openmeteo_batch_data.get(k, {})
+                    cams_parent = openmeteo_batch_data.get(parent_key, {})
+
+                    cal_ward = calibrate_india_pollutants(
+                        cams_curr.get("pm2_5", 15.0), cams_curr.get("pm10", 30.0),
+                        cams_curr.get("nitrogen_dioxide", 10.0), cams_curr.get("sulphur_dioxide", 5.0),
+                        cams_curr.get("carbon_monoxide", 300.0), cams_curr.get("ozone", 20.0),
+                    )
+                    base_ward_aqi = calculate_indian_aqi(cal_ward["pm25"], cal_ward["pm10"], cal_ward["no2"], cal_ward["so2"], cal_ward["co"], cal_ward["o3"])
+
+                    cal_par = calibrate_india_pollutants(
+                        cams_parent.get("pm2_5", 15.0), cams_parent.get("pm10", 30.0),
+                        cams_parent.get("nitrogen_dioxide", 10.0), cams_parent.get("sulphur_dioxide", 5.0),
+                        cams_parent.get("carbon_monoxide", 300.0), cams_parent.get("ozone", 20.0),
+                    )
+                    base_par_aqi = calculate_indian_aqi(cal_par["pm25"], cal_par["pm10"], cal_par["no2"], cal_par["so2"], cal_par["co"], cal_par["o3"])
+
+                    scale = (base_ward_aqi / max(1.0, base_par_aqi)) if base_par_aqi > 0 else 1.0
+                    scale = max(0.7, min(1.3, scale))
+
+                    calibrated_aqi = max(15.0, min(500.0, parent_waqi["aqi"] * scale))
+                    aq_data = {
+                        "aqi": round(calibrated_aqi, 1),
+                        "pm25": round(parent_waqi["pm25"] * scale, 1),
+                        "pm10": round(parent_waqi["pm10"] * scale, 1),
+                        "no2": parent_waqi["no2"],
+                        "so2": parent_waqi["so2"],
+                        "co": parent_waqi["co"],
+                        "o3": parent_waqi["o3"],
+                        "source": f"waqi-cpcb ground calibrated ({parent_key})"
                     }
 
-                    aqi_in = aq_data["aqi"]
+                if not aq_data and k in openmeteo_batch_data:
+                    curr = openmeteo_batch_data[k]
+                    cal = calibrate_india_pollutants(
+                        curr.get("pm2_5", 15.0), curr.get("pm10", 30.0),
+                        curr.get("nitrogen_dioxide", 10.0), curr.get("sulphur_dioxide", 5.0),
+                        curr.get("carbon_monoxide", 300.0), curr.get("ozone", 20.0),
+                    )
+                    aqi_val = calculate_indian_aqi(cal["pm25"], cal["pm10"], cal["no2"], cal["so2"], cal["co"], cal["o3"])
 
-                    source = aq_data["source"]
+                    # Regional NCR atmospheric basin calibration
+                    if parent_key in ncr_cities and ncr_ground_aqi and ncr_ground_aqi > 150.0:
+                        ncr_scale = max(0.75, min(1.25, aqi_val / 100.0))
+                        aqi_val = max(150.0, min(500.0, ncr_ground_aqi * ncr_scale))
+                        read_source = "open-meteo cams (ncr basin calibrated)"
 
-                else:
+                    aq_data = {
+                        "aqi": round(aqi_val, 1),
+                        "pm25": round(cal["pm25"], 1),
+                        "pm10": round(cal["pm10"], 1),
+                        "no2": round(cal["no2"], 1),
+                        "so2": round(cal["so2"], 1),
+                        "co": round(cal["co"], 2),
+                        "o3": round(cal["o3"], 1),
+                        "source": read_source,
+                    }
 
-                    pollutants = {"pm25": 15.0, "pm10": 30.0, "no2": 10.0, "so2": 5.0, "co": 0.3, "o3": 20.0}
-
-                    aqi_in = 40.0
-
-                    source = "estimation (fallback)"
-
-                
-
-                # Calculate procedural wind
+                if not aq_data:
+                    # Dynamic procedural baseline estimation fallback
+                    rng_fb = random.Random(hash(f"{k}_fb"))
+                    base_pm25 = rng_fb.uniform(25.0, 65.0)
+                    cal_fb = calibrate_india_pollutants(base_pm25, base_pm25 * 2.0, 15.0, 5.0, 0.4, 30.0)
+                    aqi_fb = calculate_indian_aqi(cal_fb["pm25"], cal_fb["pm10"], cal_fb["no2"], cal_fb["so2"], cal_fb["co"], cal_fb["o3"])
+                    aq_data = {
+                        "aqi": round(aqi_fb, 1),
+                        "pm25": round(cal_fb["pm25"], 1),
+                        "pm10": round(cal_fb["pm10"], 1),
+                        "no2": 15.0, "so2": 5.0, "co": 0.4, "o3": 30.0,
+                        "source": "estimation (procedural fallback)"
+                    }
 
                 h_seed = ts.hour + ts.minute // 10
-
                 rng_wind = random.Random(hash(f"{k}_{h_seed}"))
-
                 ws = rng_wind.uniform(1.5, 6.0)
-
                 wd = rng_wind.uniform(0.0, 360.0)
-
                 self._cache[f"wind_{k}"] = (ws, wd)
 
-
-
-                return {
-
+                r_entry = {
                     "sensor_id": f"SENSOR_{k}",
-
                     "ward_id": k,
-
                     "location": CITIES[k]["center"],
-
                     "timestamp": ts.isoformat(),
-
-                    "aqi": round(aqi_in, 1),
-
-                    "aqi_in": round(aqi_in, 1),
-
-                    "pollutants": pollutants,
-
-                    "source": source
-
+                    "aqi": aq_data["aqi"],
+                    "aqi_in": aq_data["aqi"],
+                    "pollutants": {
+                        "pm25": aq_data["pm25"],
+                        "pm10": aq_data["pm10"],
+                        "no2": aq_data["no2"],
+                        "so2": aq_data["so2"],
+                        "co": aq_data["co"],
+                        "o3": aq_data["o3"],
+                    },
+                    "source": aq_data["source"]
                 }
+                readings.append(r_entry)
 
-
-
-            try:
-
-                results = await asyncio.gather(*(fetch_city_reading(k, idx) for idx, k in enumerate(live_keys)), return_exceptions=True)
-
-                for k, r_entry in zip(live_keys, results):
-
-                    if isinstance(r_entry, Exception) or not r_entry:
-
-                        safe_print(f"Error fetching live city {k}:", r_entry)
-
-                        pollutants = {"pm25": 15.0, "pm10": 30.0, "no2": 10.0, "so2": 5.0, "co": 0.3, "o3": 20.0}
-
-                        r_entry = {
-
-                            "sensor_id": f"SENSOR_{k}",
-
-                            "ward_id": k,
-
-                            "location": CITIES[k]["center"],
-
-                            "timestamp": ts.isoformat(),
-
-                            "aqi": 40.0,
-
-                            "aqi_in": 40.0,
-
-                            "pollutants": pollutants,
-
-                            "source": "estimation (fallback)"
-
-                        }
-
-                    readings.append(r_entry)
-
-                    live_readings_map[k] = r_entry
-
-            except Exception as e:
-
-                safe_print("Error in parallel city fetch:", e)
-
-
-
-            # Process other cities using nearest-neighbor fallback
-
-            active_keys = list(live_readings_map.keys())
-
-            for k in other_keys:
-
-                lat, lng = CITIES[k]["center"]
-
-                
-
-                # Find nearest key among active_keys
-
-                # If this is a city ward (e.g. delhi_dwarka), directly anchor it to its parent city (e.g. delhi)
-
-                parent_key = k.split("_")[0] if "_" in k else None
-
-                if parent_key and parent_key in live_readings_map:
-
-                    nearest_key = parent_key
-
-                else:
-
-                    # Find nearest key among active_keys
-
-                    nearest_key = "delhi"
-
-                    if active_keys:
-
-                        min_dist = float('inf')
-
-                        for ak in active_keys:
-
-                            clat, clng = CITIES[ak]["center"]
-
-                            dist = (lat - clat)**2 + (lng - clng)**2
-
-                            if dist < min_dist:
-
-                                min_dist = dist
-
-                                nearest_key = ak
-
-                ref_reading = live_readings_map.get(nearest_key)
-
-
-
-                if ref_reading:
-
-                    ref_p = ref_reading["pollutants"]
-
-                    pollutants = {
-
-                        "pm25": max(0.0, self._jitter(ref_p["pm25"], 0.05)),
-
-                        "pm10": max(0.0, self._jitter(ref_p["pm10"], 0.05)),
-
-                        "no2": max(0.0, self._jitter(ref_p["no2"], 0.05)),
-
-                        "so2": max(0.0, self._jitter(ref_p["so2"], 0.05)),
-
-                        "co": max(0.0, self._jitter(ref_p["co"], 0.05)),
-
-                        "o3": max(0.0, self._jitter(ref_p["o3"], 0.05)),
-
-                    }
-
-                    aqi_in = calculate_indian_aqi(
-
-                        pollutants["pm25"], pollutants["pm10"], pollutants["no2"],
-
-                        pollutants["so2"], pollutants["co"], pollutants["o3"]
-
-                    )
-
-                    readings.append({
-
-                        "sensor_id": f"SENSOR_{k}",
-
-                        "ward_id": k,
-
-                        "location": CITIES[k]["center"],
-
-                        "timestamp": ts.isoformat(),
-
-                        "aqi": round(aqi_in, 1),
-
-                        "aqi_in": round(aqi_in, 1),
-
-                        "pollutants": pollutants,
-
-                        "source": f"nearest-neighbor fallback ({nearest_key})"
-
-                    })
-
-                else:
-
-                    pollutants = {"pm25": 30.0, "pm10": 60.0, "no2": 25.0, "so2": 8.0, "co": 0.6, "o3": 45.0}
-
-                    readings.append({
-
-                        "sensor_id": f"SENSOR_{k}",
-
-                        "ward_id": k,
-
-                        "location": CITIES[k]["center"],
-
-                        "timestamp": ts.isoformat(),
-
-                        "aqi": 80.0,
-
-                        "aqi_in": 80.0,
-
-                        "pollutants": pollutants,
-
-                        "source": "estimation (fallback)"
-
-                    })
-
-
-
-            # Store individual city readings in cache to prevent downstream per-city HTTP requests
-
+            # Store individual city readings in cache
             for r in readings:
-
                 k = r["ward_id"]
-
                 self._cache[f"readings_{k}"] = [r]
-
                 self._cache_ts[f"readings_{k}"] = time.time()
 
 
@@ -3183,13 +3083,10 @@ class SimulationEngine:
 
 
     def get_available_cities(self) -> List[Dict[str, str]]:
-
         """Return list of supported cities."""
-
         return [
-
             {"key": k, "name": v["name"], "state": v.get("state", v.get("country", ""))}
-
             for k, v in CITIES.items()
-
         ]
+
+sim = SimulationEngine()

@@ -1034,13 +1034,16 @@ class AQIForecaster:
 
         now_idx = len(aqi_series) - 1
         
-        # Anchor the forecast starting point exactly to the real-time CPCB ground station reading
-        from simulation import _fetch_real_aqi
-        real_aqi_data = await _fetch_real_aqi(lat, lng)
-        if real_aqi_data:
-            current_aqi = real_aqi_data["aqi"]
-        else:
-            current_aqi = aqi_series[now_idx]
+        # Anchor the forecast starting point to stable cached real-time CPCB / Open-Meteo reading
+        from simulation import sim
+        try:
+            readings = await sim.generate_readings(city_key)
+            if readings and len(readings) > 0:
+                current_aqi = float(readings[0].get("aqi_in", readings[0]["aqi"]))
+            else:
+                current_aqi = float(aqi_series[now_idx]) if len(aqi_series) > 0 else 50.0
+        except Exception:
+            current_aqi = float(aqi_series[now_idx]) if len(aqi_series) > 0 else 50.0
 
         # ── Predict at anchor horizons ──
         anchor_hours = []
