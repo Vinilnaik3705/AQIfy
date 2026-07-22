@@ -1017,16 +1017,16 @@ async def get_forecast(
                 # All scaled AQI figures are capped at 500.0 in accordance with the Indian NAQI scale.
                 if w_id != lookup_key and ml_hour_data.get("open_meteo_raw", 0) > 0:
                     scale = own_open_meteo_raw / ml_hour_data["open_meteo_raw"]
-                    scale = max(0.6, min(1.8, scale))
-                    scaled_aqi = max(15.0, min(round(ml_hour_data["predicted_aqi"] * scale, 1), 500.0))
-                    scaled_mitigated = max(15.0, min(round(ml_hour_data.get("mitigated_aqi", ml_hour_data["predicted_aqi"]) * scale, 1), 500.0))
-                    scaled_low = max(15.0, min(round(ml_hour_data["confidence_low"] * scale, 1), 500.0))
-                    scaled_high = max(15.0, min(round(ml_hour_data["confidence_high"] * scale, 1), 500.0))
+                    scale = max(0.7, min(1.4, scale))
+                    scaled_aqi = max(1.0, min(round(ml_hour_data["predicted_aqi"] * scale, 1), 500.0))
+                    scaled_mitigated = max(1.0, min(round(ml_hour_data.get("mitigated_aqi", ml_hour_data["predicted_aqi"]) * scale, 1), 500.0))
+                    scaled_low = max(1.0, min(round(ml_hour_data["confidence_low"] * scale, 1), 500.0))
+                    scaled_high = max(1.0, min(round(ml_hour_data["confidence_high"] * scale, 1), 500.0))
                 else:
-                    scaled_aqi = max(15.0, min(ml_hour_data["predicted_aqi"], 500.0))
-                    scaled_mitigated = max(15.0, min(ml_hour_data.get("mitigated_aqi", ml_hour_data["predicted_aqi"]), 500.0))
-                    scaled_low = max(15.0, min(ml_hour_data["confidence_low"], 500.0))
-                    scaled_high = max(15.0, min(ml_hour_data["confidence_high"], 500.0))
+                    scaled_aqi = max(1.0, min(ml_hour_data["predicted_aqi"], 500.0))
+                    scaled_mitigated = max(1.0, min(ml_hour_data.get("mitigated_aqi", ml_hour_data["predicted_aqi"]), 500.0))
+                    scaled_low = max(1.0, min(ml_hour_data["confidence_low"], 500.0))
+                    scaled_high = max(1.0, min(ml_hour_data["confidence_high"], 500.0))
 
                 # Update ward fields with ML data
                 w["predicted_aqi"] = scaled_aqi
@@ -1041,6 +1041,30 @@ async def get_forecast(
                 w["accuracy"] = ml_f["accuracy"]
                 w["anomalies"] = ml_f["anomalies"]
                 w["model_type"] = ml_f["model_type"]
+
+        # ── Final Smoothing Pass: Anchor ward forecast timelines smoothly to live readings ──
+        try:
+            live_readings = await sim.generate_readings(city)
+            live_map = {r.get("ward_id"): float(r.get("aqi_in", r.get("aqi", 25.0))) for r in live_readings if isinstance(r, dict)}
+            
+            ward_history = {}
+            MAX_STEP = 15.0
+            for entry in raw_forecast:
+                for w in entry.get("wards", []):
+                    wid = w.get("ward_id")
+                    if not wid:
+                        continue
+                    live_val = live_map.get(wid, w.get("predicted_aqi", 25.0))
+                    prev = ward_history.get(wid, live_val)
+                    curr = w.get("predicted_aqi", prev)
+                    diff = curr - prev
+                    if abs(diff) > MAX_STEP:
+                        curr = prev + MAX_STEP * (1.0 if diff > 0 else -1.0)
+                    curr = max(1.0, min(500.0, curr))
+                    w["predicted_aqi"] = round(curr, 1)
+                    ward_history[wid] = curr
+        except Exception as e:
+            pass
 
     return raw_forecast
 

@@ -2288,195 +2288,87 @@ class SimulationEngine:
 
 
         if city_key == "all":
-
             all_keys = list(CITIES.keys())
 
-
-
-            # 1. Multi-location Open-Meteo batch query for exact lat/lng of ALL cities & wards
-
+            # 1. Multi-location Open-Meteo batch query as foundational regional grid
             lats = [str(CITIES[k]["center"][0]) for k in all_keys]
-
             lngs = [str(CITIES[k]["center"][1]) for k in all_keys]
 
-
-
             openmeteo_batch_data = {}
-
             try:
-
                 url = AQ_API_URL
-
                 params = {
-
                     "latitude": ",".join(lats),
-
                     "longitude": ",".join(lngs),
-
                     "current": "us_aqi,pm10,pm2_5,carbon_monoxide,nitrogen_dioxide,sulphur_dioxide,ozone",
-
                 }
-
                 resp = await HTTP_CLIENT.get(url, params=params)
-
                 if resp.status_code == 200:
-
                     raw_data = resp.json()
-
                     items = raw_data if isinstance(raw_data, list) else [raw_data]
-
                     for k, item in zip(all_keys, items):
-
                         curr = item.get("current", {})
-
                         if curr:
-
                             openmeteo_batch_data[k] = curr
-
             except Exception as e:
-
                 safe_print("Open-Meteo multi-location batch fetch failed:", e)
 
+            # 2. Parallel OpenWeatherMap live per-coordinate fetch for ALL cities & wards
+            owm_readings_map = {}
+            sem = asyncio.Semaphore(15)
 
-
-            # 2. Parallel WAQI geo lookup for ALL cities & wards to overlay location-specific CPCB ground station truth
-
-            waqi_readings_map = {}
-
-
-
-            # Use Semaphore to avoid WAQI API rate limit drop
-
-            sem = asyncio.Semaphore(12)
-
-
-
-            async def fetch_waqi_location(k):
-
+            async def fetch_owm_location(k):
                 async with sem:
-
                     lat_k, lng_k = CITIES[k]["center"]
+                    owm_data = await _fetch_real_aqi_openweather(lat_k, lng_k)
+                    if owm_data:
+                        owm_readings_map[k] = owm_data
 
-                    w_data = await _fetch_real_aqi_waqi(lat_k, lng_k)
-
-                    if w_data:
-
-                        waqi_readings_map[k] = w_data
-
-
-
-            await asyncio.gather(*(fetch_waqi_location(k) for k in all_keys), return_exceptions=True)
-
-
-
-            # Build NCR regional ground reference set
-
-            ncr_ground_readings = [v["aqi"] for k_ncr, v in waqi_readings_map.items() if k_ncr.startswith("delhi") or k_ncr in {"gurugram", "noida", "ghaziabad", "faridabad"}]
-
-            avg_ncr_ground = sum(ncr_ground_readings) / len(ncr_ground_readings) if ncr_ground_readings else None
-
-            ncr_cities = {"delhi", "gurugram", "noida", "ghaziabad", "faridabad"}
-
-
+            await asyncio.gather(*(fetch_owm_location(k) for k in all_keys), return_exceptions=True)
 
             # 3. Assemble readings for every single key in CITIES
-
             for k in all_keys:
-
                 lat_k, lng_k = CITIES[k]["center"]
-
                 parent_key = k.split("_")[0] if "_" in k else k
-
-
-
-                read_source = "open-meteo cams (live)"
 
                 aq_data = None
 
-
-
-                # Check direct WAQI ground overlay for this exact ward/city
-
-                if k in waqi_readings_map:
-
-                    aq_data = waqi_readings_map[k]
-
-                    read_source = aq_data.get("source", "waqi-cpcb (live station)")
-
-                elif parent_key in waqi_readings_map and "_" in k:
-
-                    # Parent ground station exists: modulate parent ground reading using Open-Meteo local ward spatial variance ratio
-
-                    parent_waqi = waqi_readings_map[parent_key]
-
+                # Highest priority: Live OpenWeatherMap per-coordinate ground/air reading
+                if k in owm_readings_map:
+                    aq_data = owm_readings_map[k]
+                elif parent_key in owm_readings_map and "_" in k:
+                    # Ward modulated from parent OWM live baseline with local spatial variance
+                    p_owm = owm_readings_map[parent_key]
                     cams_curr = openmeteo_batch_data.get(k, {})
-
                     cams_parent = openmeteo_batch_data.get(parent_key, {})
 
-
-
                     cal_ward = calibrate_india_pollutants(
-
                         cams_curr.get("pm2_5", 15.0), cams_curr.get("pm10", 30.0),
-
                         cams_curr.get("nitrogen_dioxide", 10.0), cams_curr.get("sulphur_dioxide", 5.0),
-
                         cams_curr.get("carbon_monoxide", 300.0), cams_curr.get("ozone", 20.0),
-
                     )
-
                     base_ward_aqi = calculate_indian_aqi(cal_ward["pm25"], cal_ward["pm10"], cal_ward["no2"], cal_ward["so2"], cal_ward["co"], cal_ward["o3"])
 
-
-
                     cal_par = calibrate_india_pollutants(
-
                         cams_parent.get("pm2_5", 15.0), cams_parent.get("pm10", 30.0),
-
                         cams_parent.get("nitrogen_dioxide", 10.0), cams_parent.get("sulphur_dioxide", 5.0),
-
                         cams_parent.get("carbon_monoxide", 300.0), cams_parent.get("ozone", 20.0),
-
                     )
-
                     base_par_aqi = calculate_indian_aqi(cal_par["pm25"], cal_par["pm10"], cal_par["no2"], cal_par["so2"], cal_par["co"], cal_par["o3"])
 
-
-
-                    # Add location-specific spatial micro-variance
-
-                    rng_loc = random.Random(hash(f"{k}_loc_var"))
-
-                    spatial_offset = rng_loc.uniform(-12.0, 15.0)
-
-
-
                     scale = (base_ward_aqi / max(1.0, base_par_aqi)) if base_par_aqi > 0 else 1.0
+                    scale = max(0.85, min(1.15, scale))
 
-                    scale = max(0.8, min(1.25, scale))
-
-
-
-                    calibrated_aqi = max(1.0, min(500.0, (parent_waqi["aqi"] * scale) + spatial_offset))
-
+                    calibrated_aqi = max(1.0, min(500.0, p_owm["aqi"] * scale))
                     aq_data = {
-
                         "aqi": round(calibrated_aqi, 1),
-
-                        "pm25": round(max(1.0, parent_waqi["pm25"] * scale), 1),
-
-                        "pm10": round(max(1.0, parent_waqi["pm10"] * scale), 1),
-
-                        "no2": parent_waqi["no2"],
-
-                        "so2": parent_waqi["so2"],
-
-                        "co": parent_waqi["co"],
-
-                        "o3": parent_waqi["o3"],
-
-                        "source": f"waqi-cpcb ground calibrated ({parent_key})"
-
+                        "pm25": round(max(1.0, p_owm["pm25"] * scale), 1),
+                        "pm10": round(max(1.0, p_owm["pm10"] * scale), 1),
+                        "no2": p_owm["no2"],
+                        "so2": p_owm["so2"],
+                        "co": p_owm["co"],
+                        "o3": p_owm["o3"],
+                        "source": f"open-weather live ({parent_key})"
                     }
 
 
