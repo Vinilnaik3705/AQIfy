@@ -1213,23 +1213,20 @@ class AQIForecaster:
             })
 
         # ── Hour-to-hour smoothing ──
-        # Enforce a maximum AQI change between consecutive forecast hours.
-        # This prevents unrealistic jumps (e.g. 139 → 500 in one hour)
-        # while still allowing genuine gradual trends. The cap is generous
-        # enough (±30/hr) that real diurnal patterns pass through unclipped.
-        MAX_HOURLY_CHANGE = 30.0
-        if len(grid) > 1:
-            for i in range(1, len(grid)):
-                prev_aqi = grid[i - 1]["predicted_aqi"]
+        # Enforce a maximum AQI change between consecutive forecast hours (including Now -> +1h transition).
+        # Prevents artificial spikes (e.g. 176 → 307 in one hour) while preserving natural trends.
+        MAX_HOURLY_CHANGE = 18.0
+        if len(grid) > 0:
+            for i in range(0, len(grid)):
+                prev_aqi = current_aqi if i == 0 else grid[i - 1]["predicted_aqi"]
                 curr_aqi = grid[i]["predicted_aqi"]
                 diff = curr_aqi - prev_aqi
                 if abs(diff) > MAX_HOURLY_CHANGE:
                     clamped = prev_aqi + MAX_HOURLY_CHANGE * (1.0 if diff > 0 else -1.0)
-                    grid[i]["predicted_aqi"] = round(max(0.0, min(500.0, clamped)), 1)
-                    # Also adjust mitigated and confidence bounds proportionally
+                    grid[i]["predicted_aqi"] = round(max(1.0, min(500.0, clamped)), 1)
                     ratio = grid[i]["predicted_aqi"] / max(1.0, curr_aqi)
-                    grid[i]["mitigated_aqi"] = round(max(0.0, min(500.0, grid[i]["mitigated_aqi"] * ratio)), 1)
-                    grid[i]["confidence_low"] = round(max(0.0, min(grid[i]["predicted_aqi"], grid[i]["confidence_low"] * ratio)), 1)
+                    grid[i]["mitigated_aqi"] = round(max(1.0, min(500.0, grid[i]["mitigated_aqi"] * ratio)), 1)
+                    grid[i]["confidence_low"] = round(max(1.0, min(grid[i]["predicted_aqi"], grid[i]["confidence_low"] * ratio)), 1)
                     grid[i]["confidence_high"] = round(max(grid[i]["predicted_aqi"], min(500.0, grid[i]["confidence_high"] * ratio)), 1)
 
         return {
@@ -1273,13 +1270,12 @@ class AQIForecaster:
             weight_raw = min(0.50, (h + 1) / 48.0)
             smoothed_aqi = (weight_raw * raw_aqi) + ((1.0 - weight_raw) * current_aqi)
 
-            # Enforce hour-to-hour smoothing on fallback too
-            if grid:
-                prev_aqi = grid[-1]["predicted_aqi"]
-                diff = smoothed_aqi - prev_aqi
-                if abs(diff) > 30.0:
-                    smoothed_aqi = prev_aqi + 30.0 * (1.0 if diff > 0 else -1.0)
-            smoothed_aqi = max(0.0, min(500.0, smoothed_aqi))
+            # Enforce hour-to-hour smoothing starting from current_aqi
+            prev_aqi = grid[-1]["predicted_aqi"] if grid else current_aqi
+            diff = smoothed_aqi - prev_aqi
+            if abs(diff) > 18.0:
+                smoothed_aqi = prev_aqi + 18.0 * (1.0 if diff > 0 else -1.0)
+            smoothed_aqi = max(1.0, min(500.0, smoothed_aqi))
 
             grid.append({
                 "timestamp": dt.isoformat(),

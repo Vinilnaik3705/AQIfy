@@ -86,7 +86,7 @@ export default function CommandCenter({ state, selectedWard, forecast, onSelectW
             ? dt.toLocaleDateString('en-US', { weekday: 'short' })
             : String(labelHour).padStart(2, '0') + ':00';
         const rawVal = idx === 0 ? trendAqi : (wardForecast?.predicted_aqi ?? trendAqi);
-        const hourlyAqi = Math.max(15, Math.min(500, Math.round(rawVal || 15)));
+        const hourlyAqi = Math.max(1, Math.min(500, Math.round(rawVal || 15)));
         const forecastWind = Math.round(wardForecast?.wind_speed_kmh ?? windKmh);
         const isNight = labelHour < 6 || labelHour > 18;
 
