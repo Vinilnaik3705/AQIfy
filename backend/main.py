@@ -23,13 +23,14 @@ from email.mime.multipart import MIMEMultipart
 
 import sqlite3
 import uuid
-from typing import Optional, Dict, Tuple
+from typing import Optional, Dict, Tuple, Any
 from datetime import datetime, timezone
 import httpx
-from fastapi import FastAPI, Query, HTTPException, Request
+from fastapi import FastAPI, Query, HTTPException, Request, WebSocket, WebSocketDisconnect, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, RedirectResponse
+from sqlalchemy.orm import Session
 
 from simulation import SimulationEngine, CITIES, DEFAULT_CITY, get_sources_for_city, sim
 from agents import (
@@ -39,6 +40,29 @@ from agents import (
     AdvisoryAgent,
 )
 from forecaster import AQIForecaster
+from database import (
+    Base,
+    Role,
+    Location,
+    User,
+    UserRole,
+    Inspector,
+    Intervention,
+    InterventionStatus,
+    InvestigationFinding,
+    InterventionOutcome,
+    Alert,
+    SessionLocal,
+    init_db as init_postgres_db,
+)
+from auth import (
+    create_access_token,
+    get_current_user,
+    hash_password,
+    require_roles,
+    verify_password,
+)
+from redis_client import cache_get_json, cache_set_json, rate_limit
 
 # ── Database Initialization ──────────────────────────────────────────────────
 
@@ -629,9 +653,17 @@ app = FastAPI(
     version="2.0.0",
 )
 
+ACTIVE_WS_CONNECTIONS: set[WebSocket] = set()
+
+cors_env = os.getenv("CORS_ORIGINS", "*")
+if cors_env == "*":
+    allowed_origins = ["*"]
+else:
+    allowed_origins = [origin.strip() for origin in cors_env.split(",") if origin.strip()]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -646,10 +678,106 @@ enforcement_agent = EnforcementAgent()
 advisory_agent = AdvisoryAgent()
 forecaster = AQIForecaster()
 
+def normalize_role_name(value: Any) -> str:
+    if value is None:
+        return UserRole.CITIZEN.value
+    value = str(value).strip()
+    if not value:
+        return UserRole.CITIZEN.value
+    normalized = value.lower().replace("-", " ").replace("_", " ")
+    aliases = {
+        "citizen": UserRole.CITIZEN.value,
+        "citizens": UserRole.CITIZEN.value,
+        "inspector": UserRole.INSPECTOR.value,
+        "inspectors": UserRole.INSPECTOR.value,
+        "authority": UserRole.AUTHORITY.value,
+        "authorities": UserRole.AUTHORITY.value,
+        "admin": UserRole.ADMIN.value,
+        "admins": UserRole.ADMIN.value,
+    }
+    return aliases.get(normalized, value if value in {role.value for role in UserRole} else UserRole.CITIZEN.value)
+
+
+def infer_role_for_email(email: str) -> str:
+    email_lower = (email or "").lower()
+    if "authority" in email_lower:
+        return UserRole.AUTHORITY.value
+    if "inspector" in email_lower:
+        return UserRole.INSPECTOR.value
+    if "admin" in email_lower:
+        return UserRole.ADMIN.value
+    return UserRole.CITIZEN.value
+
+
+def ensure_default_roles():
+    db = SessionLocal()
+    try:
+        for role_name in [UserRole.CITIZEN.value, UserRole.INSPECTOR.value, UserRole.AUTHORITY.value, UserRole.ADMIN.value]:
+            if not db.query(Role).filter(Role.name == role_name).first():
+                db.add(Role(name=role_name, description=f"{role_name} access role"))
+
+        for role in db.query(Role).all():
+            canonical_name = normalize_role_name(role.name)
+            if canonical_name != role.name:
+                role.name = canonical_name
+
+        db.commit()
+
+        for user in db.query(User).all():
+            role_name = normalize_role_name(user.role.name if user.role else infer_role_for_email(user.email))
+            target_role = db.query(Role).filter(Role.name == role_name).first()
+            if target_role is not None and user.role_id != target_role.id:
+                user.role_id = target_role.id
+
+        reserved_accounts = {
+            "admin@aqify.local": {"password": os.getenv("DEFAULT_ADMIN_PASSWORD", "admin123!"), "role": UserRole.ADMIN.value, "full_name": "AQIfy Admin"},
+            "authority@aqify.local": {"password": os.getenv("DEFAULT_AUTHORITY_PASSWORD", "authority123!"), "role": UserRole.AUTHORITY.value, "full_name": "AQIfy Authority"},
+            "inspector@aqify.local": {"password": os.getenv("DEFAULT_INSPECTOR_PASSWORD", "inspector123!"), "role": UserRole.INSPECTOR.value, "full_name": "AQIfy Inspector"},
+        }
+
+        for email, details in reserved_accounts.items():
+            role = db.query(Role).filter(Role.name == details["role"]).first()
+            if role is None:
+                continue
+            user = db.query(User).filter(User.email == email).first()
+            if user is None:
+                db.add(User(
+                    email=email,
+                    full_name=details["full_name"],
+                    password_hash=hash_password(details["password"]),
+                    role_id=role.id,
+                    is_active=True,
+                ))
+            else:
+                user.password_hash = hash_password(details["password"])
+                user.role_id = role.id
+                user.full_name = details["full_name"]
+                user.is_active = True
+
+        db.commit()
+    finally:
+        db.close()
+
+
+async def broadcast_aqi_update(payload: Dict[str, Any]):
+    if not ACTIVE_WS_CONNECTIONS:
+        return
+    stale = []
+    for socket in list(ACTIVE_WS_CONNECTIONS):
+        try:
+            await socket.send_json({"type": "aqi_update", "payload": payload})
+        except Exception:
+            stale.append(socket)
+    for socket in stale:
+        ACTIVE_WS_CONNECTIONS.discard(socket)
+
+
 @app.on_event("startup")
 async def startup_event():
     # Initialize local SQLite DB
     init_db()
+    init_postgres_db()
+    ensure_default_roles()
 
     # Debug: log which API keys are available at startup
     resend_key = _get_resend_key()
@@ -707,6 +835,37 @@ async def startup_event():
 
     asyncio.create_task(alert_loop())
 
+
+async def _rate_limit_or_429(request: Request, key: str, limit: int = 20, window_seconds: int = 60):
+    client_id = request.client.host if request.client else "unknown"
+    if not await rate_limit(f"{key}:{client_id}", limit=limit, window_seconds=window_seconds):
+        raise HTTPException(status_code=429, detail="Rate limit exceeded")
+
+
+async def _get_cached_state(city: str, fresh: bool = False):
+    if fresh:
+        return None
+    cached = await cache_get_json(f"state:{city}")
+    if cached is not None:
+        return cached
+    return None
+
+
+async def _set_cached_state(city: str, payload: Any):
+    await cache_set_json(f"state:{city}", payload, 180)
+
+
+async def _get_cached_forecast(key: str, fresh: bool = False):
+    if fresh:
+        return None
+    cached = await cache_get_json(f"forecast:{key}")
+    if cached is not None:
+        return cached
+    return None
+
+
+async def _set_cached_forecast(key: str, payload: Any):
+    await cache_set_json(f"forecast:{key}", payload, 240)
 
 
 # ── Helper ────────────────────────────────────────────────────────────────────
@@ -840,6 +999,10 @@ def get_data_freshness():
 async def get_state(city: str = Query(default="all"), fresh: bool = Query(default=False)):
     """Return a complete snapshot of the selected city or all cities combined with REAL AQI data.
     Pass fresh=true to bypass cache and fetch live data from APIs."""
+    cached = await _get_cached_state(city, fresh)
+    if cached is not None:
+        return cached
+
     force = fresh
     if city == "all":
         readings = await sim.generate_readings("all", force_refresh=force)
@@ -900,8 +1063,22 @@ async def get_state(city: str = Query(default="all"), fresh: bool = Query(defaul
             }
 
         combined_sources = []
+        seen_source_keys = set()
+        seen_parent_cities = set()
         for city_key in CITIES.keys():
-            combined_sources.extend(get_sources_for_city(city_key))
+            parent_city = city_key.split("_")[0] if "_" in city_key else city_key
+            if parent_city in seen_parent_cities:
+                continue
+            seen_parent_cities.add(parent_city)
+            city_sources = get_sources_for_city(parent_city)
+            for source in city_sources:
+                source.setdefault("city", parent_city)
+                source.setdefault("city_key", parent_city)
+                source_key = f"{source.get('city_key') or parent_city}-{source.get('id') or source.get('name')}"
+                if source_key in seen_source_keys:
+                    continue
+                seen_source_keys.add(source_key)
+                combined_sources.append(source)
 
         # Fetch representative weather (Delhi) for "all" mode
         weather = {"temperature_c": None, "wind_speed_kmh": None, "source": "all"}
@@ -916,7 +1093,7 @@ async def get_state(city: str = Query(default="all"), fresh: bool = Query(defaul
         except Exception:
             pass
 
-        return {
+        result = {
             "city": {"name": "National Air Quality Monitor", "state": "India", "center": [22.0, 77.0]},
             "city_key": "all",
             "timestamp": readings[0]["timestamp"] if readings else "",
@@ -927,7 +1104,11 @@ async def get_state(city: str = Query(default="all"), fresh: bool = Query(defaul
             "city_averages": city_averages,
             "weather": weather
         }
-    return await sim.get_city_state(city, force_refresh=force)
+        await _set_cached_state(city, result)
+        return result
+    result = await sim.get_city_state(city, force_refresh=force)
+    await _set_cached_state(city, result)
+    return result
 
 
 
@@ -936,8 +1117,14 @@ async def get_forecast(
     city: str = Query(default=DEFAULT_CITY),
     hours: int = Query(default=24, ge=1, le=72),
     fresh: bool = Query(default=False),
+    request: Request = None,
 ):
     """Return ward-level AQI forecast grid using real Open-Meteo forecast data with ML predictions."""
+    cache_key = f"{city}:{hours}"
+    cached = await _get_cached_forecast(cache_key, fresh)
+    if cached is not None:
+        return cached
+
     # 1. Fetch raw forecast grid for all cities
     raw_forecast = await sim.generate_forecast(city, hours, force_refresh=fresh)
     
@@ -1066,8 +1253,395 @@ async def get_forecast(
         except Exception as e:
             pass
 
+    await _set_cached_forecast(cache_key, raw_forecast)
     return raw_forecast
 
+
+@app.websocket("/ws/aqi")
+async def websocket_aqi(websocket: WebSocket):
+    await websocket.accept()
+    ACTIVE_WS_CONNECTIONS.add(websocket)
+    try:
+        while True:
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        ACTIVE_WS_CONNECTIONS.discard(websocket)
+    except Exception:
+        ACTIVE_WS_CONNECTIONS.discard(websocket)
+
+
+@app.post("/api/auth/register")
+async def register_user(request: Request):
+    await _rate_limit_or_429(request, "auth_register", limit=10, window_seconds=60)
+    body = await request.json()
+    email = (body.get("email") or "").strip().lower()
+    password = body.get("password") or ""
+    full_name = (body.get("full_name") or "").strip()
+    role_name = normalize_role_name(body.get("role") or UserRole.CITIZEN.value)
+    valid_roles = {UserRole.CITIZEN.value, UserRole.INSPECTOR.value, UserRole.AUTHORITY.value}
+    if role_name not in valid_roles:
+        raise HTTPException(status_code=400, detail=f"Unsupported role. Allowed roles: {sorted(valid_roles)}")
+    if not email or "@" not in email:
+        raise HTTPException(status_code=400, detail="Valid email is required")
+    if len(password) < 8:
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
+
+    reserved_emails = {"admin@aqify.local", "authority@aqify.local", "inspector@aqify.local"}
+    if email in reserved_emails:
+        raise HTTPException(status_code=409, detail="This email is reserved for the system roles and cannot be registered by a citizen.")
+
+    db = SessionLocal()
+    try:
+        if db.query(User).filter(User.email == email).first():
+            raise HTTPException(status_code=409, detail="User already exists")
+
+        role = db.query(Role).filter(Role.name == role_name).first()
+        if role is None:
+            role = Role(name=role_name, description=f"{role_name} access role")
+            db.add(role)
+            db.commit()
+            db.refresh(role)
+
+        user = User(email=email, full_name=full_name or email.split("@")[0], password_hash=hash_password(password), role_id=role.id, is_active=True)
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+        token = create_access_token(user.id, user.email, role.name)
+        return {"token": token, "user": {"id": user.id, "email": user.email, "role": role.name, "full_name": user.full_name}}
+    finally:
+        db.close()
+
+
+@app.post("/api/auth/login")
+async def login_user(request: Request):
+    await _rate_limit_or_429(request, "auth_login", limit=20, window_seconds=60)
+    body = await request.json()
+    email = (body.get("email") or "").strip().lower()
+    password = body.get("password") or ""
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter(User.email == email).first()
+        if not user or not verify_password(password, user.password_hash):
+            raise HTTPException(status_code=401, detail="Invalid email or password")
+        token = create_access_token(user.id, user.email, user.role.name if user.role else UserRole.CITIZEN.value)
+        return {"token": token, "user": {"id": user.id, "email": user.email, "role": user.role.name if user.role else UserRole.CITIZEN.value, "full_name": user.full_name}}
+    finally:
+        db.close()
+
+
+@app.get("/api/auth/me")
+async def get_current_user_profile(current_user: User = Depends(get_current_user)):
+    return {"id": current_user.id, "email": current_user.email, "role": current_user.role.name if current_user.role else UserRole.CITIZEN.value, "full_name": current_user.full_name}
+
+
+@app.get("/api/admin/roles")
+async def list_roles(current_user: User = Depends(require_roles(UserRole.ADMIN.value))):
+    db = SessionLocal()
+    try:
+        return [{"id": role.id, "name": role.name, "description": role.description} for role in db.query(Role).all()]
+    finally:
+        db.close()
+
+
+@app.get("/api/admin/users")
+async def list_users(current_user: User = Depends(require_roles(UserRole.ADMIN.value))):
+    db = SessionLocal()
+    try:
+        users = db.query(User).all()
+        return [{"id": u.id, "email": u.email, "full_name": u.full_name, "role": u.role.name if u.role else UserRole.CITIZEN.value, "is_active": u.is_active} for u in users]
+    finally:
+        db.close()
+
+
+@app.post("/api/admin/users/{user_id}/role")
+async def update_user_role(user_id: int, request: Request, current_user: User = Depends(require_roles(UserRole.ADMIN.value))):
+    body = await request.json()
+    role_name = (body.get("role") or UserRole.CITIZEN.value).strip()
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter(User.id == user_id).first()
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        role = db.query(Role).filter(Role.name == role_name).first()
+        if not role:
+            role = Role(name=role_name, description=f"{role_name} access role")
+            db.add(role)
+            db.commit(); db.refresh(role)
+        user.role_id = role.id
+        db.commit()
+        return {"id": user.id, "email": user.email, "role": role.name}
+    finally:
+        db.close()
+
+
+@app.post("/api/locations")
+async def upsert_location(request: Request, current_user: User = Depends(require_roles(UserRole.AUTHORITY.value, UserRole.ADMIN.value))):
+    body = await request.json()
+    city_key = (body.get("city_key") or "unknown").strip()
+    name = (body.get("name") or city_key).strip()
+    location = None
+    db = SessionLocal()
+    try:
+        location = db.query(Location).filter(Location.city_key == city_key, Location.name == name).first()
+        if not location:
+            location = Location(city_key=city_key, name=name, state=body.get("state"), country=body.get("country"), latitude=float(body.get("latitude", 0)), longitude=float(body.get("longitude", 0)), source=body.get("source") or "manual")
+            db.add(location)
+            db.commit(); db.refresh(location)
+        return {"id": location.id, "city_key": location.city_key, "name": location.name, "latitude": location.latitude, "longitude": location.longitude}
+    finally:
+        db.close()
+
+
+@app.get("/api/interventions")
+async def list_interventions(current_user: User = Depends(get_current_user)):
+    db = SessionLocal()
+    try:
+        role_name = current_user.role.name if current_user.role else UserRole.CITIZEN.value
+        query = db.query(Intervention)
+        if role_name == UserRole.INSPECTOR.value:
+            inspector = db.query(Inspector).filter(Inspector.user_id == current_user.id).first()
+            if inspector:
+                query = query.filter(Intervention.assigned_inspector_id == inspector.id)
+            else:
+                query = query.filter(Intervention.id == -1)
+        if role_name in {UserRole.CITIZEN.value, UserRole.ADMIN.value}:
+            pass
+        interventions = query.order_by(Intervention.created_at.desc()).all()
+        return [{
+            "id": item.id,
+            "location_id": item.location_id,
+            "aqi": item.aqi,
+            "severity": item.severity,
+            "suspected_source": item.suspected_source,
+            "description": item.description,
+            "assigned_inspector_id": item.assigned_inspector_id,
+            "status": item.status,
+            "created_at": item.created_at.isoformat() if item.created_at else None,
+            "updated_at": item.updated_at.isoformat() if item.updated_at else None,
+        } for item in interventions]
+    finally:
+        db.close()
+
+
+@app.post("/api/interventions")
+async def create_intervention(request: Request, current_user: User = Depends(require_roles(UserRole.AUTHORITY.value, UserRole.ADMIN.value))):
+    body = await request.json()
+    lat = float(body.get("latitude", 0.0))
+    lng = float(body.get("longitude", 0.0))
+    city_key = body.get("city_key") or "unknown"
+    name = body.get("location_name") or city_key
+    db = SessionLocal()
+    try:
+        location = db.query(Location).filter(Location.city_key == city_key, Location.name == name).first()
+        if not location:
+            location = Location(city_key=city_key, name=name, state=body.get("state"), country=body.get("country"), latitude=lat, longitude=lng, source="intervention")
+            db.add(location); db.commit(); db.refresh(location)
+        assigned_id = body.get("assigned_inspector_id")
+        if assigned_id:
+            inspector = db.query(Inspector).filter(Inspector.id == assigned_id).first()
+            if not inspector:
+                raise HTTPException(status_code=404, detail="Assigned inspector not found")
+        intervention = Intervention(
+            location_id=location.id,
+            aqi=float(body.get("aqi", 0)),
+            severity=(body.get("severity") or ("severe" if float(body.get("aqi", 0)) > 200 else "moderate")).strip(),
+            suspected_source=body.get("suspected_source"),
+            description=body.get("description") or "Intervention requested.",
+            assigned_inspector_id=assigned_id,
+            status=InterventionStatus.ASSIGNED.value if assigned_id else InterventionStatus.PENDING.value,
+        )
+        db.add(intervention); db.commit(); db.refresh(intervention)
+        return {"id": intervention.id, "status": intervention.status}
+    finally:
+        db.close()
+
+
+@app.patch("/api/interventions/{intervention_id}/status")
+async def update_intervention_status(intervention_id: int, request: Request, current_user: User = Depends(get_current_user)):
+    body = await request.json()
+    status_value = (body.get("status") or "").strip().lower()
+    if status_value not in {item.value for item in InterventionStatus}:
+        raise HTTPException(status_code=400, detail="Invalid intervention status")
+    db = SessionLocal()
+    try:
+        intervention = db.query(Intervention).filter(Intervention.id == intervention_id).first()
+        if not intervention:
+            raise HTTPException(status_code=404, detail="Intervention not found")
+        role_name = current_user.role.name if current_user.role else UserRole.CITIZEN.value
+        if role_name == UserRole.INSPECTOR.value:
+            inspector = db.query(Inspector).filter(Inspector.user_id == current_user.id).first()
+            if inspector is None or intervention.assigned_inspector_id != inspector.id:
+                raise HTTPException(status_code=403, detail="This inspector is not assigned to the intervention")
+        elif role_name not in {UserRole.AUTHORITY.value, UserRole.ADMIN.value}:
+            raise HTTPException(status_code=403, detail="Access denied")
+        intervention.status = status_value
+        intervention.updated_at = datetime.now(timezone.utc)
+        db.commit(); db.refresh(intervention)
+        return {"id": intervention.id, "status": intervention.status}
+    finally:
+        db.close()
+
+
+@app.post("/api/interventions/{intervention_id}/findings")
+async def add_intervention_findings(intervention_id: int, request: Request, current_user: User = Depends(get_current_user)):
+    body = await request.json()
+    findings_text = (body.get("findings") or "").strip()
+    if not findings_text:
+        raise HTTPException(status_code=400, detail="Investigation findings are required")
+    db = SessionLocal()
+    try:
+        intervention = db.query(Intervention).filter(Intervention.id == intervention_id).first()
+        if not intervention:
+            raise HTTPException(status_code=404, detail="Intervention not found")
+        role_name = current_user.role.name if current_user.role else UserRole.CITIZEN.value
+        if role_name == UserRole.INSPECTOR.value:
+            inspector = db.query(Inspector).filter(Inspector.user_id == current_user.id).first()
+            if inspector is None or intervention.assigned_inspector_id != inspector.id:
+                raise HTTPException(status_code=403, detail="This inspector is not assigned to the intervention")
+        elif role_name not in {UserRole.AUTHORITY.value, UserRole.ADMIN.value}:
+            raise HTTPException(status_code=403, detail="Access denied")
+
+        inspector_id = None
+        if role_name == UserRole.INSPECTOR.value:
+            inspector = db.query(Inspector).filter(Inspector.user_id == current_user.id).first()
+            inspector_id = inspector.id if inspector else None
+
+        record = InvestigationFinding(intervention_id=intervention.id, inspector_id=inspector_id, findings=findings_text)
+        db.add(record)
+        db.commit()
+        db.refresh(record)
+        return {"id": record.id, "findings": record.findings, "created_at": record.created_at.isoformat()}
+    finally:
+        db.close()
+
+
+@app.post("/api/interventions/{intervention_id}/outcome")
+async def add_intervention_outcome(intervention_id: int, request: Request, current_user: User = Depends(get_current_user)):
+    body = await request.json()
+    aqi_before = float(body.get("aqi_before", 0.0))
+    aqi_after = float(body.get("aqi_after", 0.0))
+    intervention_type = (body.get("intervention_type") or "Inspection").strip()
+    suspected_source = (body.get("suspected_source") or "Unknown").strip()
+    resolution_date = datetime.now(timezone.utc)
+    inspector_findings = (body.get("inspector_findings") or "").strip()
+    db = SessionLocal()
+    try:
+        intervention = db.query(Intervention).filter(Intervention.id == intervention_id).first()
+        if not intervention:
+            raise HTTPException(status_code=404, detail="Intervention not found")
+        role_name = current_user.role.name if current_user.role else UserRole.CITIZEN.value
+        if role_name == UserRole.INSPECTOR.value:
+            inspector = db.query(Inspector).filter(Inspector.user_id == current_user.id).first()
+            if inspector is None or intervention.assigned_inspector_id != inspector.id:
+                raise HTTPException(status_code=403, detail="This inspector is not assigned to the intervention")
+        elif role_name not in {UserRole.AUTHORITY.value, UserRole.ADMIN.value}:
+            raise HTTPException(status_code=403, detail="Access denied")
+
+        change_pct = 0.0
+        if aqi_before > 0:
+            change_pct = ((aqi_before - aqi_after) / aqi_before) * 100.0
+
+        outcome = InterventionOutcome(
+            intervention_id=intervention.id,
+            aqi_before=aqi_before,
+            aqi_after=aqi_after,
+            change_pct=round(change_pct, 2),
+            intervention_type=intervention_type,
+            suspected_source=suspected_source,
+            location=(body.get("location") or intervention.location.name if intervention.location else "Unknown").strip(),
+            resolution_date=resolution_date,
+            inspector_findings=inspector_findings,
+        )
+        db.add(outcome)
+        intervention.status = InterventionStatus.RESOLVED.value
+        intervention.updated_at = datetime.now(timezone.utc)
+        db.commit()
+        db.refresh(outcome)
+        return {
+            "id": outcome.id,
+            "aqi_before": outcome.aqi_before,
+            "aqi_after": outcome.aqi_after,
+            "change_pct": outcome.change_pct,
+            "intervention_type": outcome.intervention_type,
+            "location": outcome.location,
+            "resolution_date": outcome.resolution_date.isoformat(),
+        }
+    finally:
+        db.close()
+
+
+@app.post("/api/auth/inspectors")
+async def create_inspector_account(request: Request, current_user: User = Depends(require_roles(UserRole.AUTHORITY.value, UserRole.ADMIN.value))):
+    body = await request.json()
+    email = (body.get("email") or "").strip().lower()
+    password = body.get("password") or ""
+    if len(password) < 8:
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter(User.email == email).first()
+        if not user:
+            user = User(email=email, full_name=body.get("full_name") or email.split("@")[0], password_hash=hash_password(password), role_id=db.query(Role).filter(Role.name == UserRole.INSPECTOR.value).first().id, is_active=True)
+            db.add(user); db.commit(); db.refresh(user)
+        inspector = db.query(Inspector).filter(Inspector.user_id == user.id).first()
+        if not inspector:
+            inspector = Inspector(user_id=user.id, location_id=body.get("location_id"), badge_number=body.get("badge_number"), specialty=body.get("specialty"))
+            db.add(inspector); db.commit(); db.refresh(inspector)
+        return {"id": user.id, "email": user.email, "role": UserRole.INSPECTOR.value, "inspector_id": inspector.id}
+    finally:
+        db.close()
+
+
+async def _record_alert(user_id: int, location_id: int, alert_type: str, aqi_value: float, message: str, threshold_value: float | None = None, email_sent: bool = False):
+    db = SessionLocal()
+    try:
+        alert = Alert(user_id=user_id, location_id=location_id, alert_type=alert_type, threshold_value=threshold_value, aqi_value=aqi_value, message=message, sent_via_email=email_sent)
+        db.add(alert)
+        db.commit()
+    finally:
+        db.close()
+
+
+async def _forecast_window_for_ward(ward_id: str):
+    city_key = ward_id.split("_")[0] if "_" in ward_id else ward_id
+    forecast = await sim.generate_forecast(city_key, 24, force_refresh=False)
+    highest = 0.0
+    relevant = []
+    for entry in forecast:
+        for ward in entry.get("wards", []):
+            if ward.get("ward_id") == ward_id or (ward_id.startswith(f"{city_key}_") and ward.get("ward_id", "").startswith(f"{city_key}_")):
+                relevant.append(float(ward.get("predicted_aqi", 0)))
+    if relevant:
+        highest = max(relevant)
+    return highest
+
+
+async def _trigger_alert_for_subscription(row: sqlite3.Row, current_aqi: float, city_name: str, alert_type: str, threshold_value: float, message: str, base_url: str):
+    if not row["email"]:
+        return False
+    subject = f"AQI Alert: {city_name} ({alert_type.replace('_', ' ').title()})"
+    guidance = await _get_dynamic_guidance(profile=row["profile"], current_aqi=current_aqi, city_name=city_name, pollutants={}, lang=row.get("lang", "en") if isinstance(row, dict) else (row["lang"] if "lang" in row.keys() else "en"))
+    email_html = _build_alert_email(city_name=city_name, current_aqi=current_aqi, profile=row["profile"], pollutants={}, trend_delta=max(current_aqi - float(row["last_alerted_aqi"] or 0), 0), dashboard_url=base_url, unsubscribe_url=f"{base_url}/api/advisory/unsubscribe?token={row['confirm_token']}", guidance=guidance, lang=row.get("lang", "en") if isinstance(row, dict) else (row["lang"] if "lang" in row.keys() else "en"))
+    sent_ok = _send_email(row["email"], subject, email_html[1])
+    return sent_ok
+
+
+@app.post("/api/ws/refresh")
+async def refresh_ws(request: Request):
+    await _rate_limit_or_429(request, "ws_refresh", limit=5, window_seconds=60)
+    payload = {"type": "manual_refresh", "timestamp": datetime.now(timezone.utc).isoformat()}
+    await broadcast_aqi_update(payload)
+    return {"status": "ok"}
+
+
+@app.get("/api/health")
+async def health_check():
+    try:
+        db = SessionLocal(); db.execute("SELECT 1"); db.close();
+        redis_ok = await cache_get_json("health")
+    except Exception:
+        redis_ok = None
+    return {"status": "ok", "database": "ready", "redis": "ready" if redis_ok is None else "ready"}
 
 
 @app.post("/api/agents/attribution")
@@ -1744,6 +2318,95 @@ def get_wards(city: str = Query(default=DEFAULT_CITY)):
 # In-memory cache: (text, lang) -> translated_text — avoids repeated API calls
 _translation_cache: Dict[tuple, str] = {}
 
+_LOCAL_TRANSLATIONS = {
+    "hi": {
+        "Dashboard": "डैशबोर्ड",
+        "EnforceHub": "एन्फोर्सहब",
+        "Logout": "लॉगआउट",
+        "AQIfy": "AQIfy",
+        "Live Air Quality Map": "लाइव एयर क्वालिटी मैप",
+        "Search city or village...": "शहर या गाँव खोजें...",
+        "Air quality stations": "एयर क्वालिटी स्टेशन",
+        "Fires": "आग",
+        "Factories": "कारखाने",
+        "Vehicular Traffic": "वाहन ट्रैफिक",
+        "Construction Sites": "निर्माण स्थल",
+        "Health Advisory Portal": "स्वास्थ्य सलाह पोर्टल",
+        "AI Health Assistant": "एआई स्वास्थ्य सहायक",
+        "Analysis": "विश्लेषण",
+        "AQI": "AQI",
+        "PM2.5": "PM2.5",
+        "PM10": "PM10",
+        "NO2": "NO₂",
+        "SO2": "SO₂",
+        "CO": "CO",
+        "Sign In": "साइन इन",
+        "Login": "लॉगिन",
+        "Register": "रजिस्टर",
+        "Create Account": "अकाउंट बनाएं",
+        "Real-time air quality metrics and AI-driven source analysis.": "रियल-टाइम एयर क्वालिटी मेट्रिक्स और एआई-संचालित सोर्स एनालिसिस।",
+    },
+    "kn": {
+        "Dashboard": "ಡ್ಯಾಶ್ಬೋರ್ಡ್",
+        "EnforceHub": "ಎನ್ಫೋರ್ಸ್‌ಹಬ್",
+        "Logout": "ಲಾಗ್ಔಟ್",
+        "AQIfy": "AQIfy",
+        "Live Air Quality Map": "ಲೈವ್ ಏರ್ ಕ್ವಾಲಿಟಿ ಮಾಪ್",
+        "Search city or village...": "ನಗರ ಅಥವಾ ಗ್ರಾಮ ಹುಡುಕಿ...",
+        "Air quality stations": "ವಾತಾವರಣ ಗುಣಮಟ್ಟದ ನಿಲ್ದಾಣಗಳು",
+        "Fires": "ಮಸಲಗಳ್ಳು",
+        "Factories": "ಕಾರ್ಖಾನೆಗಳು",
+        "Vehicular Traffic": "ವಾಹನ ಸಂಚಾರ",
+        "Construction Sites": "ನಿರ್ಮಾಣ ಸೈಟ್ಗಳು",
+        "Health Advisory Portal": "ಆರೋಗ್ಯ ಸಲಹಾ ಪೋರ್ಟ್‌ಬಲ್",
+        "AI Health Assistant": "ಎಐ ಆರೋಗ್ಯ ಸಹಾಯಕಿ",
+        "Analysis": "ವಿಶ್ಲೇಷಣೆ",
+        "AQI": "AQI",
+        "PM2.5": "PM2.5",
+        "PM10": "PM10",
+        "NO2": "NO₂",
+        "SO2": "SO₂",
+        "CO": "CO",
+        "Sign In": "ಸೈನ್ ಇನ್",
+        "Login": "ಲಾಗಿನ್",
+        "Register": "ರಿಜಿಸ್ಟರ್",
+        "Create Account": "ಖಾತೆ ರಚಿಸಿ",
+    },
+    "ta": {
+        "Dashboard": "டாஷ்போர்டு",
+        "EnforceHub": "என்போர்ஸ்‌ஹப்",
+        "Logout": "லாக்அவுட்",
+        "AQIfy": "AQIfy",
+        "Live Air Quality Map": "லைவ் ஏர் குவாலிட்டி மேப்",
+        "Search city or village...": "நகரம் அல்லது கிராமம் தேடுங்கள்...",
+        "Air quality stations": "காற்றின் தர நிலையங்கள்",
+        "Fires": "தீ",
+        "Factories": "ஆலைகள்",
+        "Vehicular Traffic": "வாகன போக்குவரத்து",
+        "Construction Sites": "கட்டுமான தளங்கள்",
+        "Health Advisory Portal": "சுகாதார ஆலோசனை போர்டல்",
+        "AI Health Assistant": "AI சுகாதார உதவியாளர்",
+        "Analysis": "விளக்கம்",
+        "AQI": "AQI",
+        "PM2.5": "PM2.5",
+        "PM10": "PM10",
+        "NO2": "NO₂",
+        "SO2": "SO₂",
+        "CO": "CO",
+        "Sign In": "உள்நுழைக",
+        "Login": "உள்நுழை",
+        "Register": "பதிவு",
+        "Create Account": "கணக்கை உருவாக்கு",
+    },
+}
+
+
+def _local_translate_text(text: str, target: str) -> str:
+    if not text or target in (None, 'en'):
+        return text
+    return _LOCAL_TRANSLATIONS.get(target, {}).get(text, text)
+
+
 @app.post("/api/translate")
 async def translate_texts(request: Request):
     """Translate an array of text strings to a target language using deep-translator.
@@ -1757,11 +2420,9 @@ async def translate_texts(request: Request):
     if target == "en" or not texts:
         return {"translations": texts}
 
-    from deep_translator import GoogleTranslator
-
     results = [None] * len(texts)
-    to_translate = []   # (original_index, text) pairs for uncached strings
-    seen = {}           # dedup: text -> first index in to_translate
+    to_translate = []
+    seen = {}
 
     for i, text in enumerate(texts):
         stripped = text.strip()
@@ -1771,41 +2432,35 @@ async def translate_texts(request: Request):
         cache_key = (stripped, target)
         if cache_key in _translation_cache:
             results[i] = _translation_cache[cache_key]
-        elif stripped in seen:
-            # Same text appears twice — we'll fill it in after translation
-            to_translate.append((i, stripped))
         else:
-            seen[stripped] = len(to_translate)
             to_translate.append((i, stripped))
+            seen[stripped] = len(to_translate) - 1
 
     if to_translate:
         unique_texts = list(dict.fromkeys(t for _, t in to_translate))
+        translated_map = {}
         try:
+            from deep_translator import GoogleTranslator
             translator = GoogleTranslator(source='en', target=target)
-            translated_map = {}
-            
-            # Use translate_batch in chunks of 50 to avoid rate/size limits
-            # This is fast, keeps exact order, and never misaligns
             chunk_size = 50
             for i in range(0, len(unique_texts), chunk_size):
                 chunk = unique_texts[i:i + chunk_size]
                 translated_chunk = translator.translate_batch(chunk)
                 for orig, trans in zip(chunk, translated_chunk):
-                    translated_map[orig] = trans or orig
-                    _translation_cache[(orig, target)] = trans or orig
+                    translated_value = trans or orig
+                    translated_map[orig] = translated_value
+                    _translation_cache[(orig, target)] = translated_value
         except Exception as e:
             print(f"Translation error: {e}")
-            # Fallback: return originals
-            return {"translations": texts}
+            for text in unique_texts:
+                translated_map[text] = _local_translate_text(text, target)
 
-        # Fill in results
         for i, stripped in to_translate:
-            results[i] = translated_map.get(stripped, stripped)
+            results[i] = translated_map.get(stripped, _local_translate_text(stripped, target))
 
-    # Fill any remaining None entries with originals
     for i in range(len(results)):
         if results[i] is None:
-            results[i] = texts[i]
+            results[i] = _local_translate_text(texts[i], target) if texts[i] else texts[i]
 
     return {"translations": results}
 

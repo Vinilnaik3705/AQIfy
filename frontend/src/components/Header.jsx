@@ -139,6 +139,22 @@ function LanguageSelector({ onLanguageChange }) {
   const observerRef = useRef(null)
 
   useEffect(() => {
+    const savedLang = safeLocalStorage.getItem('aqify_lang')
+    if (savedLang && LANGUAGES.some(lang => lang.code === savedLang)) {
+      setSelected(savedLang)
+      setActiveLang(savedLang)
+      document.documentElement.lang = savedLang
+      if (savedLang !== 'en') {
+        const root = document.getElementById('root')
+        if (root) {
+          const nodes = getTextNodes(root)
+          translateNodes(nodes, savedLang)
+        }
+      }
+    }
+  }, [])
+
+  useEffect(() => {
     function handleClickOutside(e) {
       if (ref.current && !ref.current.contains(e.target)) setOpen(false)
     }
@@ -186,8 +202,10 @@ function LanguageSelector({ onLanguageChange }) {
 
   const translatePage = useCallback(async (langCode) => {
     setActiveLang(langCode)
+    document.documentElement.lang = langCode
     if (langCode === 'en') {
       restoreOriginals()
+      setTranslating(false)
       return
     }
     setTranslating(true)
@@ -284,7 +302,10 @@ function LanguageSelector({ onLanguageChange }) {
   )
 }
 
-export default function Header({ tab, setTab, onSelectPlace, wards, onSelectWard, onLanguageChange }) {
+export default function Header({ tab, setTab, onSelectPlace, wards, onSelectWard, onLanguageChange, user, onLogout }) {
+  const role = user?.role || 'Citizen'
+  const showEnforcement = role === 'Authority' || role === 'Admin'
+
   return (
     <header className="header">
       {/* Brand Logo and Title */}
@@ -346,28 +367,62 @@ export default function Header({ tab, setTab, onSelectPlace, wards, onSelectWard
           </button>
 
           {/* EnforceHub Button */}
-          <button
-            onClick={() => setTab('enforcement')}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px',
-              padding: '6px 16px',
-              background: tab === 'enforcement' ? '#ef4444' : 'transparent',
-              color: tab === 'enforcement' ? '#ffffff' : '#64748b',
-              border: 'none',
-              borderRadius: '20px',
-              cursor: 'pointer',
-              fontWeight: '750',
-              fontSize: '12px',
-              boxShadow: tab === 'enforcement' ? '0 2px 6px rgba(239, 68, 68, 0.2)' : 'none',
-              transition: 'all 0.15s ease'
-            }}
-          >
-            <Shield size={14} />
-            <span>EnforceHub</span>
-          </button>
+          {showEnforcement && (
+            <button
+              onClick={() => setTab('enforcement')}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+                padding: '6px 16px',
+                background: tab === 'enforcement' ? '#ef4444' : 'transparent',
+                color: tab === 'enforcement' ? '#ffffff' : '#64748b',
+                border: 'none',
+                borderRadius: '20px',
+                cursor: 'pointer',
+                fontWeight: '750',
+                fontSize: '12px',
+                boxShadow: tab === 'enforcement' ? '0 2px 6px rgba(239, 68, 68, 0.2)' : 'none',
+                transition: 'all 0.15s ease'
+              }}
+            >
+              <Shield size={14} />
+              <span>EnforceHub</span>
+            </button>
+          )}
         </div>
+
+        {user && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginLeft: 8 }}>
+            <div style={{
+              padding: '6px 10px',
+              borderRadius: 999,
+              background: '#e2e8f0',
+              color: '#0f172a',
+              fontSize: 12,
+              fontWeight: 700,
+              whiteSpace: 'nowrap',
+            }}>
+              {user.full_name || user.email}
+            </div>
+            <button
+              type="button"
+              onClick={onLogout}
+              style={{
+                border: '1px solid #cbd5e1',
+                background: '#fff',
+                color: '#0f172a',
+                borderRadius: 999,
+                padding: '6px 12px',
+                fontSize: 12,
+                fontWeight: 700,
+                cursor: 'pointer',
+              }}
+            >
+              Logout
+            </button>
+          </div>
+        )}
       </div>
     </header>
   )

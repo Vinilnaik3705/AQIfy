@@ -1,7 +1,7 @@
 /* ── Command Center: live AQI map + detail panel ────────────────────────── */
 
 import { useState } from 'react'
-import { MapContainer, TileLayer, CircleMarker, Popup, Marker, WMSTileLayer, ZoomControl } from 'react-leaflet'
+import { MapContainer, TileLayer, CircleMarker, Popup, Marker, ZoomControl } from 'react-leaflet'
 import 'leaflet/dist/leaflet.css'
 import { Search, Wind, Thermometer, Activity, MapPin, Factory, Car, Hammer, Flame, Leaf, Radio, Sun, Cloud, CloudRain, Moon, CloudMoon } from 'lucide-react'
 import { SOURCE_COLORS } from '../lib/constants'
@@ -228,23 +228,10 @@ export default function CommandCenter({ state, selectedWard, forecast, onSelectW
                 )
               })}
 
-              {/* NASA Active Fires Layer (Toggled by Fires Overlay) */}
-              {showFires && (
-                <WMSTileLayer
-                  url="https://gibs.earthdata.nasa.gov/wms/epsg3857/best/wms.cgi"
-                  layers="VIIRS_SNPP_Thermal_Anomalies_375m_All"
-                  format="image/png"
-                  transparent={true}
-                  attribution="NASA GIBS / FIRMS"
-                  noWrap={true}
-                  time={new Date(mountedAt - 86400000).toISOString().split('T')[0]}
-                />
-              )}
-
-
+              {/* External fire tiles are intentionally disabled to avoid API-required overlays and keep the map fully local/off-grid. */}
 
               {/* Registered Emission Sources (Toggled by Factories, Vehicular, Construction) */}
-              {state.sources && state.sources.map(src => {
+              {state.sources && state.sources.map((src, index) => {
                 const visible =
                   (src.category === 'industrial' && showFactories) ||
                   (src.category === 'vehicular' && showVehicular) ||
@@ -252,9 +239,11 @@ export default function CommandCenter({ state, selectedWard, forecast, onSelectW
 
                 if (!visible) return null;
 
+                const sourceKey = `${src.city_key || src.city || 'global'}-${src.id || src.name || index}-${src.category || 'source'}`;
+
                 return (
                   <CircleMarker
-                    key={`source-cc-${src.id}`}
+                    key={`source-cc-${sourceKey}`}
                     center={src.location}
                     radius={8}
                     pathOptions={{

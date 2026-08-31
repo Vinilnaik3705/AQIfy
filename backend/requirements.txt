@@ -7,4 +7,10 @@ scipy==1.14.1
 resend==2.32.2
 python-dotenv==1.0.1
 deep-translator==1.11.4
+sqlalchemy==2.0.35
+psycopg2-binary==2.9.10
+redis==5.1.1
+pyjwt==2.10.1
+passlib==1.7.4
+alembic==1.14.0
 

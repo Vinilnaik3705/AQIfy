@@ -1821,6 +1821,12 @@ async def _fetch_real_forecast(lat: float, lng: float, hours: int = 72) -> Optio
 
 def get_sources_for_city(city_key: str) -> List[Dict[str, Any]]:
 
+    def enrich_sources(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        for item in items:
+            item.setdefault("city", lookup_key)
+            item.setdefault("city_key", lookup_key)
+        return items
+
     # Resolve sub-locality key (e.g. "hyderabad_secunderabad") to parent city key
 
     lookup_key = city_key
@@ -1843,7 +1849,7 @@ def get_sources_for_city(city_key: str) -> List[Dict[str, Any]]:
 
     if lookup_key == "delhi":
 
-        return [
+        return enrich_sources([
 
             {"id": "delhi_stack_1", "name": "Okhla Thermal Stack", "category": "industrial", "location": [28.5355, 77.2639], "Q": 350.0, "H": 100.0},
 
@@ -1853,11 +1859,11 @@ def get_sources_for_city(city_key: str) -> List[Dict[str, Any]]:
 
             {"id": "delhi_fire_1", "name": "Satellite Fire Anomaly (MODIS)", "category": "waste_burning", "location": [28.6500, 77.1500], "Q": 150.0, "H": 0.0}
 
-        ]
+        ])
 
     elif lookup_key == "mumbai":
 
-        return [
+        return enrich_sources([
 
             {"id": "mumbai_stack_1", "name": "Trombay Refinery Stack", "category": "industrial", "location": [19.0025, 72.9150], "Q": 400.0, "H": 120.0},
 
@@ -1865,11 +1871,11 @@ def get_sources_for_city(city_key: str) -> List[Dict[str, Any]]:
 
             {"id": "mumbai_fire_1", "name": "Deonar Dump Yard Fire (Satellite Detected)", "category": "waste_burning", "location": [19.0700, 72.9300], "Q": 200.0, "H": 0.0}
 
-        ]
+        ])
 
     elif lookup_key == "hyderabad":
 
-        return [
+        return enrich_sources([
 
             {"id": "hyd_stack_1", "name": "Jeedimetla Industrial Area Stack", "category": "industrial", "location": [17.5186, 78.4552], "Q": 300.0, "H": 80.0},
 
@@ -1881,11 +1887,11 @@ def get_sources_for_city(city_key: str) -> List[Dict[str, Any]]:
 
             {"id": "hyd_fire_1", "name": "Jawaharnagar Dump Yard Fire", "category": "waste_burning", "location": [17.5312, 78.5834], "Q": 180.0, "H": 0.0}
 
-        ]
+        ])
 
     elif lookup_key == "bengaluru":
 
-        return [
+        return enrich_sources([
 
             {"id": "blr_stack_1", "name": "Peenya Industrial Area Phase I-IV", "category": "industrial", "location": [13.0285, 77.5195], "Q": 280.0, "H": 75.0},
 
@@ -1895,11 +1901,11 @@ def get_sources_for_city(city_key: str) -> List[Dict[str, Any]]:
 
             {"id": "blr_fire_1", "name": "Mavallipura Landfill Smoldering Fire", "category": "waste_burning", "location": [13.1250, 77.5500], "Q": 120.0, "H": 0.0}
 
-        ]
+        ])
 
     elif lookup_key == "chennai":
 
-        return [
+        return enrich_sources([
 
             {"id": "chn_stack_1", "name": "Manali Petrochemical Stack", "category": "industrial", "location": [13.1700, 80.2600], "Q": 380.0, "H": 110.0},
 
@@ -1909,11 +1915,11 @@ def get_sources_for_city(city_key: str) -> List[Dict[str, Any]]:
 
             {"id": "chn_fire_1", "name": "Perungudi Dump Site Satellite Thermal Anomaly", "category": "waste_burning", "location": [12.9550, 80.2350], "Q": 190.0, "H": 0.0}
 
-        ]
+        ])
 
     elif lookup_key == "kolkata":
 
-        return [
+        return enrich_sources([
 
             {"id": "kol_stack_1", "name": "Port Trust Industrial Stacks", "category": "industrial", "location": [22.5300, 88.3100], "Q": 290.0, "H": 85.0},
 
@@ -1923,7 +1929,7 @@ def get_sources_for_city(city_key: str) -> List[Dict[str, Any]]:
 
             {"id": "kol_fire_1", "name": "Dhapa Landfill Waste Burning Anomaly", "category": "waste_burning", "location": [22.5510, 88.4200], "Q": 170.0, "H": 0.0}
 
-        ]
+        ])
 
     else:
 
@@ -1989,6 +1995,10 @@ def get_sources_for_city(city_key: str) -> List[Dict[str, Any]]:
 
                 "Q": round(rng.uniform(150, 400), 1), "H": round(rng.uniform(50, 120), 1),
 
+                "city": lookup_key,
+
+                "city_key": lookup_key,
+
             })
 
 
@@ -2017,6 +2027,10 @@ def get_sources_for_city(city_key: str) -> List[Dict[str, Any]]:
 
                 "Q": round(rng.uniform(50, 150), 1), "H": 2.0,
 
+                "city": lookup_key,
+
+                "city_key": lookup_key,
+
             })
 
 
@@ -2044,6 +2058,10 @@ def get_sources_for_city(city_key: str) -> List[Dict[str, Any]]:
                 "category": "construction", "location": [lat + olat, lng + olng],
 
                 "Q": round(rng.uniform(30, 100), 1), "H": 0.0,
+
+                "city": lookup_key,
+
+                "city_key": lookup_key,
 
             })
 
@@ -2075,11 +2093,15 @@ def get_sources_for_city(city_key: str) -> List[Dict[str, Any]]:
 
                 "Q": round(rng.uniform(80, 200), 1), "H": 0.0,
 
+                "city": lookup_key,
+
+                "city_key": lookup_key,
+
             })
 
 
 
-        return sources
+        return enrich_sources(sources)
 
 
 
@@ -3117,4 +3139,4 @@ class SimulationEngine:
             for k, v in CITIES.items()
         ]
 
-sim = SimulationEngine()
+sim = SimulationEngine()

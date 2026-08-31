@@ -1,0 +1,27 @@
+services:
+  - type: web
+    name: aqi-intervention-backend
+    env: python
+    plan: free
+    rootDir: .
+    buildCommand: "pip install -r backend/requirements.txt"
+    startCommand: "cd backend && uvicorn main:app --host 0.0.0.0 --port $PORT"
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11"
+      - key: DATABASE_URL
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: SECRET_KEY
+        generateValue: true
+      - key: PUBLIC_BASE_URL
+        sync: false
+      - key: CORS_ORIGINS
+        sync: false
+      - key: DEFAULT_ADMIN_PASSWORD
+        value: "Admin@12345"
+      - key: DEFAULT_AUTHORITY_PASSWORD
+        value: "Authority@12345"
+      - key: DEFAULT_INSPECTOR_PASSWORD
+        value: "Inspector@12345"
