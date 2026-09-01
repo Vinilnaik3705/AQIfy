@@ -169,17 +169,24 @@ function LanguageSelector({ onLanguageChange }) {
     observerRef.current = new MutationObserver((mutations) => {
       if (getActiveLang() === 'en') return
 
-      // Sync original text cache when React updates DOM nodes
+      const changedNodes = new Set()
+
       mutations.forEach(m => {
         if (m.type === 'characterData') {
           const node = m.target
           const currentText = node.textContent.trim()
-          const orig = getOriginal(node)
-          if (orig) {
-            const trans = getTranslation(orig.trim())
-            if (currentText && currentText !== trans) {
-              setOriginal(node, node.textContent)
-            }
+          const existingOriginal = getOriginal(node)
+
+          if (!existingOriginal) {
+            setOriginal(node, currentText)
+            changedNodes.add(node)
+            return
+          }
+
+          const previousOriginal = existingOriginal.trim()
+          if (currentText && currentText !== previousOriginal) {
+            setOriginal(node, currentText)
+            changedNodes.add(node)
           }
         }
       })
@@ -189,10 +196,13 @@ function LanguageSelector({ onLanguageChange }) {
         const nodes = getTextNodes(root)
         const untranslated = nodes.filter(n => {
           const orig = (getOriginal(n) || n.textContent).trim()
-          return getTranslation(orig) && n.textContent.trim() !== getTranslation(orig)
+          if (!orig) return false
+          const translated = getTranslation(orig)
+          if (translated && n.textContent.trim() !== translated) return true
+          return changedNodes.has(n)
         })
         const brandNew = nodes.filter(n => !hasOriginal(n))
-        const all = [...untranslated, ...brandNew]
+        const all = [...new Set([...untranslated, ...brandNew])]
         if (all.length > 0) translateNodes(all, getActiveLang())
       }, 300)
     })

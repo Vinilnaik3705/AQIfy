@@ -11,8 +11,10 @@ Implements the four core AI agents:
 from __future__ import annotations
 
 import math
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
+
+ADVISORY_CACHE: Dict[tuple, tuple[datetime, Dict[str, Any]]] = {}
 
 
 # ── Utility ───────────────────────────────────────────────────────────────────
@@ -1108,6 +1110,19 @@ class AdvisoryAgent:
     ) -> Dict[str, Any]:
         level = self._aqi_level(aqi)
 
+        cache_key = (
+            ward.get("id"),
+            round(float(aqi), 1),
+            lang,
+            profile,
+            tuple(sorted((pollutants or {}).items())),
+            round(float((weather or {}).get("wind_speed_kmh", -1)), 1) if weather else None,
+        )
+        now = datetime.now(timezone.utc)
+        cached = ADVISORY_CACHE.get(cache_key)
+        if cached and now - cached[0] < timedelta(minutes=10):
+            return cached[1]
+
         # Attempt to use Gemini LLM for dynamic multi-lingual advisory generation if key is provided
         import os
         import json
@@ -1184,7 +1199,7 @@ IMPORTANT: Return ONLY the raw JSON object. Do not wrap it in markdown block quo
                         text_response = text_response.strip()
                         
                         parsed = json.loads(text_response)
-                        return {
+                        result = {
                             "ward_id": ward["id"],
                             "ward_name": ward["name"],
                             "aqi": aqi,
@@ -1198,6 +1213,8 @@ IMPORTANT: Return ONLY the raw JSON object. Do not wrap it in markdown block quo
                             "vulnerable_info": ward.get("vulnerable", {}),
                             "generated_at": datetime.now(timezone.utc).isoformat(),
                         }
+                        ADVISORY_CACHE[cache_key] = (now, result)
+                        return result
             except Exception as e:
                 print(f"Gemini API Error, falling back to static advisory: {e}")
 
@@ -1275,7 +1292,7 @@ IMPORTANT: Return ONLY the raw JSON object. Do not wrap it in markdown block quo
         else:
             reason_text += exp["background"]
 
-        return {
+        result = {
             "ward_id": ward["id"],
             "ward_name": ward["name"],
             "aqi": aqi,
@@ -1289,6 +1306,8 @@ IMPORTANT: Return ONLY the raw JSON object. Do not wrap it in markdown block quo
             "vulnerable_info": ward.get("vulnerable", {}),
             "generated_at": datetime.now(timezone.utc).isoformat(),
         }
+        ADVISORY_CACHE[cache_key] = (now, result)
+        return result
 
     @staticmethod
     def _aqi_level(aqi: float) -> str:

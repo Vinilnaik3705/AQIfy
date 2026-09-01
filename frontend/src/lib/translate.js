@@ -1,5 +1,7 @@
 /* ── DOM translation engine (backend-powered via /api/translate) ────────── */
 
+const API = (import.meta.env.VITE_API_BASE_URL || window.location.origin).replace(/\/$/, '')
+
 // Module-level stores so MutationObserver callbacks can access them
 const originalTexts = new Map()
 let translationMap = {}
@@ -71,7 +73,7 @@ export async function translateNodes(nodes, langCode) {
 
   if (uniqueTexts.length > 0) {
     try {
-      const resp = await fetch('/api/translate', {
+      const resp = await fetch(`${API}/api/translate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ texts: uniqueTexts, target: langCode }),
