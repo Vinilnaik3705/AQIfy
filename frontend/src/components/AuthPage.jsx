@@ -14,6 +14,7 @@ export default function AuthPage({ onAuth }) {
   const [form, setForm] = useState(initialForm)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [showPassword, setShowPassword] = useState(false)
 
   const isLogin = mode === 'login'
 
@@ -147,14 +148,33 @@ export default function AuthPage({ onAuth }) {
           </div>
 
           <div style={{ marginBottom: 18 }}>
-            <label style={{ display: 'block', marginBottom: 8, color: '#cbd5e1', fontSize: 13, fontWeight: 600 }}>Password</label>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+              <label style={{ color: '#cbd5e1', fontSize: 13, fontWeight: 600 }}>Password</label>
+              <button
+                type="button"
+                aria-label={showPassword ? 'Hide password' : 'Show password'}
+                onClick={() => setShowPassword(prev => !prev)}
+                style={{
+                  border: 'none',
+                  background: 'transparent',
+                  color: '#cbd5e1',
+                  cursor: 'pointer',
+                  fontSize: 16,
+                  display: 'flex',
+                  alignItems: 'center',
+                  padding: 0,
+                }}
+              >
+                {showPassword ? '🙈' : '👁️'}
+              </button>
+            </div>
             <input
               name="password"
-              type="password"
+              type={showPassword ? 'text' : 'password'}
               value={form.password}
               onChange={handleChange}
               placeholder="Enter password"
-              style={fieldStyle}
+              style={{ ...fieldStyle, paddingRight: 42 }}
             />
           </div>
 
