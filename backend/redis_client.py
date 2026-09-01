@@ -45,11 +45,12 @@ async def cache_set_json(key: str, value: Any, ttl_seconds: int):
 
 async def cache_delete(key: str):
     redis_client = await get_redis_client()
-    if redis_client:
-        try:
-            await redis_client.delete(key)
-        except Exception:
-            pass
+    if not redis_client:
+        return
+    try:
+        await redis_client.delete(key)
+    except Exception:
+        return
 
 
 async def rate_limit(key: str, limit: int = 20, window_seconds: int = 60, identifier: str | None = None) -> bool:

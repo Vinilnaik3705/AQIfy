@@ -28,11 +28,11 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
     try:
         return pwd_context.verify(plain_password, hashed_password)
     except Exception:
-        try:
-            if isinstance(hashed_password, str) and hashed_password.startswith("$2"):
+        if isinstance(hashed_password, str) and hashed_password.startswith("$2"):
+            try:
                 return bcrypt.checkpw(plain_password.encode("utf-8"), hashed_password.encode("utf-8"))
-        except Exception:
-            pass
+            except Exception:
+                return False
         return False
 
 
@@ -94,8 +94,3 @@ def require_roles(*allowed_roles: Iterable[str]):
 
     return dependency
 
-
-def role_name_for_user(user: User | None) -> str:
-    if user is None or user.role is None:
-        return UserRole.CITIZEN.value
-    return user.role.name
