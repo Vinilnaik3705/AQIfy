@@ -68,7 +68,7 @@ from redis_client import cache_get_json, cache_set_json, rate_limit
 
 def _get_db_path():
     """Retrieve the persistent DB path.
-    Mounts to Hugging Face Spaces /data if writable, or custom path.
+    Uses a configured persistent path when present, otherwise a local app path.
     """
     env_path = os.environ.get("PERSISTENT_DB_PATH")
     if env_path:
@@ -119,7 +119,7 @@ def _get_resend_key() -> Optional[str]:
 
 def _send_email(to_email: str, subject: str, html_body: str) -> bool:
     """Send an email using Brevo (if configured), SMTP (if configured), Resend (as fallback), or Console simulation."""
-    # 1. Brevo HTTP API Dispatch (Perfect for Hugging Face — runs over port 443, no domain verification required)
+    # 1. Brevo HTTP API Dispatch
     brevo_key = os.environ.get("BREVO_API_KEY")
     if brevo_key:
         brevo_sender_email = os.environ.get("BREVO_SENDER_EMAIL") or os.environ.get("SMTP_USER")

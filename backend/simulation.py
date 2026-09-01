@@ -859,7 +859,7 @@ async def _fetch_real_aqi_openweather(lat: float, lng: float) -> Optional[Dict[s
 
 
 
-# ── WAQI API (Hugging Face / CPCB Ground Stations) ───────────────────────────
+# ── WAQI API / CPCB Ground Stations ─────────────────────────────────────────
 
 
 

@@ -1,13 +1,3 @@
----
-title: AQI Urban Air Quality Intelligence
-emoji: 🌫️
-colorFrom: blue
-colorTo: purple
-sdk: docker
-pinned: false
-license: mit
----
-
 # 🌫️ AQI Intervention Platform
 
 An AI-Powered Urban Air Quality Intelligence Platform designed to monitor, forecast, and mitigate air pollution in real time across dozens of major Indian cities. It combines a **FastAPI backend** (multi-agent intelligence layer, machine learning forecasting, and spatial data simulation) with a premium **React/Vite frontend** command center dashboard.
