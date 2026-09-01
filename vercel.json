@@ -2,11 +2,11 @@
   "rewrites": [
     {
       "source": "/api/(.*)",
-      "destination": "https://YOUR_BACKEND_URL/api/$1"
+      "destination": "https://aqify.onrender.com/api/$1"
     },
     {
       "source": "/ws/(.*)",
-      "destination": "wss://YOUR_BACKEND_URL/ws/$1"
+      "destination": "wss://aqify.onrender.com/ws/$1"
     }
   ],
   "headers": [
