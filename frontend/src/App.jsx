@@ -16,7 +16,7 @@ const EnforcementView = lazy(() => import('./views/EnforcementView'))
 
 const FORECAST_HOURS = 72
 
-function InspectorAssignmentsPanel({ work, selectedWard }) {
+function InspectorAssignmentsPanel({ work, selectedWard, onOpenMap }) {
   if (!work || work.length === 0) {
     return (
       <div style={{
@@ -70,6 +70,31 @@ function InspectorAssignmentsPanel({ work, selectedWard }) {
             </div>
             <div style={{ color: '#cbd5e1', fontSize: '12px', lineHeight: 1.6 }}>
               {item.description || 'Inspection required for this location.'}
+            </div>
+            {item.recommendation && (
+              <div style={{ marginTop: 8, color: '#bfdbfe', fontSize: '12px', lineHeight: 1.5 }}>
+                <strong style={{ color: '#f8fafc' }}>Evidence details:</strong>{' '}
+                {item.recommendation.split('\n').slice(0, 2).join(' ')}
+              </div>
+            )}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, marginTop: 10 }}>
+              <span style={{ color: '#94a3b8', fontSize: '11px', textTransform: 'capitalize' }}>{item.status || 'assigned'}</span>
+              <button
+                type="button"
+                onClick={() => onOpenMap?.(item)}
+                style={{
+                  border: '1px solid rgba(147, 197, 253, 0.35)',
+                  borderRadius: 8,
+                  background: 'rgba(37, 99, 235, 0.16)',
+                  color: '#bfdbfe',
+                  padding: '6px 9px',
+                  fontSize: 11,
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                }}
+              >
+                View on map
+              </button>
             </div>
           </div>
         ))}
@@ -135,6 +160,8 @@ export default function App() {
   const [dispatches, setDispatches] = useState(null)
   const [evidenceModal, setEvidenceModal] = useState(null)
   const [assignedWork, setAssignedWork] = useState([])
+  const [dispatchingInspector, setDispatchingInspector] = useState(false)
+  const [dispatchError, setDispatchError] = useState('')
 
   // Advisory state
   const [advisory, setAdvisory] = useState(null)
@@ -151,6 +178,7 @@ export default function App() {
 
   const roleName = auth?.user?.role || 'Citizen'
   const canViewEnforcement = ['Inspector', 'Authority', 'Admin'].includes(roleName)
+  const canDispatchInspector = roleName === 'Admin'
 
   const handleAuthenticate = useCallback((nextAuth) => {
     setAuth(nextAuth)
@@ -355,7 +383,7 @@ export default function App() {
     return () => { cancelled = true }
   }, [isAdvisoryOpen, selectedWard, advLang, advProfile])
 
-  const handleSelectPlace = async (place) => {
+  const handleSelectPlace = useCallback(async (place) => {
     const { controller, requestId } = beginSelectionRequest()
     const data = await fetchJSON(`/api/aqi-details?lat=${place.lat}&lng=${place.lng}&name=${encodeURIComponent(place.name)}&country=${encodeURIComponent(place.country)}&state=${encodeURIComponent(place.state)}`, { signal: controller.signal })
     if (data && requestId === selectionRequestRef.current && !controller.signal.aborted) {
@@ -369,7 +397,7 @@ export default function App() {
       setTargetCenter([place.lat, place.lng])
       setTargetZoom(10)
     }
-  }
+  }, [beginSelectionRequest])
 
   const handleSelectWard = useCallback(async (ward) => {
     const { controller, requestId } = beginSelectionRequest()
@@ -399,6 +427,76 @@ export default function App() {
       })
     }
   }, [beginSelectionRequest])
+
+  const handleOpenDispatchMap = useCallback((item) => {
+    const location = Array.isArray(item?.location)
+      ? { latitude: item.location[0], longitude: item.location[1] }
+      : (item?.location || {})
+    const latitude = Number(item?.latitude ?? location.latitude)
+    const longitude = Number(item?.longitude ?? location.longitude)
+    const ward = state?.wards?.find((candidate) => {
+      if (item?.ward_id && candidate.id === item.ward_id) return true
+      if (item?.ward_name && candidate.name === item.ward_name) return true
+      if (!Number.isFinite(latitude) || !Number.isFinite(longitude) || !candidate.center) return false
+      return Math.abs(candidate.center[0] - latitude) < 0.02 && Math.abs(candidate.center[1] - longitude) < 0.02
+    })
+
+    setEvidenceModal(null)
+    setTab('command')
+    if (ward) {
+      void handleSelectWard(ward)
+      return
+    }
+    if (Number.isFinite(latitude) && Number.isFinite(longitude)) {
+      void handleSelectPlace({
+        name: item?.ward_name || item?.location_name || location.name || 'Inspection location',
+        lat: latitude,
+        lng: longitude,
+        country: location.country || 'India',
+        state: location.state || '',
+      })
+    }
+  }, [handleSelectPlace, handleSelectWard, state])
+
+  const handleDispatchInspector = useCallback(async (data) => {
+    setDispatchingInspector(true)
+    setDispatchError('')
+    const location = Array.isArray(data?.location)
+      ? { latitude: data.location[0], longitude: data.location[1] }
+      : (data?.location || {})
+    const result = await fetchJSON('/api/interventions/dispatch', {
+      method: 'POST',
+      body: JSON.stringify({
+        location: {
+          ...location,
+          name: data?.ward_name || data?.location_name || location.name,
+        },
+        city_key: data?.city_key || location.city_key || data?.ward_id?.split('_')[0] || 'unknown',
+        location_name: data?.ward_name || data?.location_name || location.name,
+        latitude: data?.location?.[0] ?? data?.latitude ?? location.latitude,
+        longitude: data?.location?.[1] ?? data?.longitude ?? location.longitude,
+        aqi: data?.aqi,
+        severity: data?.severity,
+        priority_score: data?.priority_score,
+        inferred_sources: data?.inferred_sources,
+        recommended_actions: data?.recommended_actions,
+        description: `Inspection required for ${data?.ward_name || data?.location_name || 'the assigned location'}.`,
+      }),
+    })
+    if (result) {
+      setEvidenceModal(current => current ? ({
+        ...current,
+        intervention_id: result.id,
+        dispatch_status: result.status,
+        assigned_inspector: result.assigned_inspector,
+      }) : current)
+      const refreshedWork = await fetchJSON('/api/interventions')
+      if (Array.isArray(refreshedWork)) setAssignedWork(refreshedWork)
+    } else {
+      setDispatchError('The inspector could not be dispatched. Please try again.')
+    }
+    setDispatchingInspector(false)
+  }, [])
 
   // ── Render ───────────────────────────────────────────────────────────
 
@@ -450,7 +548,7 @@ export default function App() {
         {tab === 'command' && (
           <>
             {roleName === 'Inspector' && (
-              <InspectorAssignmentsPanel work={assignedWork} selectedWard={selectedWard} />
+              <InspectorAssignmentsPanel work={assignedWork} selectedWard={selectedWard} onOpenMap={handleOpenDispatchMap} />
             )}
             <div className="title-section">
               <h1 className="main-title">Live Air Quality Map</h1>
@@ -482,6 +580,7 @@ export default function App() {
               dispatches={dispatches}
               onRefresh={loadDispatches}
               onViewEvidence={setEvidenceModal}
+              onOpenMap={handleOpenDispatchMap}
             />
           </Suspense>
         )}
@@ -520,7 +619,15 @@ export default function App() {
 
       {/* ── Evidence Modal ───────────────────────────────────────────── */}
       {evidenceModal && (
-        <EvidenceModal data={evidenceModal} onClose={() => setEvidenceModal(null)} />
+        <EvidenceModal
+          data={evidenceModal}
+          canDispatch={canDispatchInspector}
+          dispatching={dispatchingInspector}
+          dispatchError={dispatchError}
+          onDispatch={handleDispatchInspector}
+          onOpenMap={handleOpenDispatchMap}
+          onClose={() => setEvidenceModal(null)}
+        />
       )}
     </div>
   )

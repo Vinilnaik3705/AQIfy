@@ -99,18 +99,27 @@ def ensure_default_roles():
                 continue
             user = db.query(User).filter(User.email == email).first()
             if user is None:
-                db.add(User(
+                user = User(
                     email=email,
                     full_name=details["full_name"],
                     password_hash=hash_password(details["password"]),
                     role_id=role.id,
                     is_active=True,
-                ))
+                )
+                db.add(user)
             else:
                 user.password_hash = hash_password(details["password"])
                 user.role_id = role.id
                 user.full_name = details["full_name"]
                 user.is_active = True
+
+            # The reserved Inspector account must have an Inspector profile so
+            # Admin assignments are visible when that account logs in.
+            if details["role"] == UserRole.INSPECTOR.value:
+                db.flush()
+                inspector = db.query(Inspector).filter(Inspector.user_id == user.id).first()
+                if inspector is None:
+                    db.add(Inspector(user_id=user.id, specialty="Air quality inspection"))
 
         db.commit()
     finally:

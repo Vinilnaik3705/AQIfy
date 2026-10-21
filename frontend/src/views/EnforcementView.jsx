@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import { RefreshCw, FileText, Navigation } from 'lucide-react'
 
-export default function EnforcementView({ dispatches, onRefresh, onViewEvidence }) {
+export default function EnforcementView({ dispatches, onRefresh, onViewEvidence, onOpenMap }) {
   const [selectedIndex, setSelectedIndex] = useState(0)
   const [scanning, setScanning] = useState(false)
 
@@ -203,9 +203,9 @@ export default function EnforcementView({ dispatches, onRefresh, onViewEvidence 
                     <FileText size={13} />
                     View Evidence Package
                   </button>
-                  <a
-                    href={activeItem.location ? `https://maps.google.com/?q=${activeItem.location[0]},${activeItem.location[1]}` : '#'}
-                    target="_blank" rel="noopener noreferrer"
+                  <button
+                    type="button"
+                    onClick={() => onOpenMap?.(activeItem)}
                     style={{
                       padding: '10px 16px',
                       border: '1px solid #e2e8f0',
@@ -217,12 +217,13 @@ export default function EnforcementView({ dispatches, onRefresh, onViewEvidence 
                       textDecoration: 'none',
                       display: 'flex',
                       alignItems: 'center',
-                      gap: '4px'
+                      gap: '4px',
+                      cursor: 'pointer',
                     }}
                   >
                     <Navigation size={12} />
                     Maps
-                  </a>
+                  </button>
                 </div>
               </div>
             ) : (

@@ -1,11 +1,18 @@
 /* ── Evidence Modal (EnforceHub violation detail) ───────────────────────── */
 
-import { useState } from 'react'
 import { Search, AlertTriangle, Activity, MapPin, Factory, Car, Hammer, Flame, FileText, Navigation, Clock, AlertCircle, CheckCircle } from 'lucide-react'
 import { aqiColor } from '../../lib/aqi'
 
-export default function EvidenceModal({ data, onClose }) {
-  const [dispatched, setDispatched] = useState(false)
+export default function EvidenceModal({
+  data,
+  canDispatch = false,
+  dispatching = false,
+  dispatchError = '',
+  onDispatch,
+  onOpenMap,
+  onClose,
+}) {
+  const dispatched = Boolean(data.intervention_id || data.dispatch_status === 'assigned')
 
   const POLLUTANT_LIMITS = { pm25: 60, pm10: 100, no2: 40, so2: 40, co: 2000, o3: 50 }
   const POLLUTANT_UNITS = { pm25: 'µg/m³', pm10: 'µg/m³', no2: 'ppb', so2: 'ppb', co: 'ppb', o3: 'ppb' }
@@ -255,19 +262,23 @@ export default function EvidenceModal({ data, onClose }) {
 
           {/* ── Action Buttons ───────────────────────── */}
           <div style={{ marginTop: '28px', display: 'flex', gap: '12px', paddingTop: '22px', borderTop: '1px solid #f1f5f9' }}>
-            {!dispatched ? (
-              <button style={{
-                flex: 1, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '8px',
-                fontWeight: '800', fontSize: '14px', padding: '12px 24px', borderRadius: '14px',
-                background: 'linear-gradient(135deg, #ef4444 0%, #dc2626 100%)', color: '#ffffff',
-                border: 'none', cursor: 'pointer', boxShadow: '0 6px 16px rgba(239,68,68,0.3)',
-                transition: 'all 0.2s ease'
-              }}
-                onClick={() => setDispatched(true)}
-                onMouseOver={e => e.currentTarget.style.transform = 'translateY(-1px)'}
-                onMouseOut={e => e.currentTarget.style.transform = 'none'}>
+            {canDispatch && (!dispatched ? (
+              <button
+                type="button"
+                disabled={dispatching}
+                style={{
+                  flex: 1, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '8px',
+                  fontWeight: '800', fontSize: '14px', padding: '12px 24px', borderRadius: '14px',
+                  background: dispatching ? '#94a3b8' : 'linear-gradient(135deg, #ef4444 0%, #dc2626 100%)', color: '#ffffff',
+                  border: 'none', cursor: dispatching ? 'wait' : 'pointer', boxShadow: '0 6px 16px rgba(239,68,68,0.3)',
+                  transition: 'all 0.2s ease'
+                }}
+                onClick={() => onDispatch?.(data)}
+                onMouseOver={e => { if (!dispatching) e.currentTarget.style.transform = 'translateY(-1px)' }}
+                onMouseOut={e => e.currentTarget.style.transform = 'none'}
+              >
                 <Activity size={16} />
-                <span>Dispatch Inspector</span>
+                <span>{dispatching ? 'Dispatching…' : 'Dispatch Inspector'}</span>
               </button>
             ) : (
               <div style={{
@@ -278,20 +289,22 @@ export default function EvidenceModal({ data, onClose }) {
                 <CheckCircle size={16} />
                 <span>Inspector Dispatched ✓</span>
               </div>
-            )}
-            <a href={`https://maps.google.com/?q=${data.location[0]},${data.location[1]}`}
-              target="_blank" rel="noopener noreferrer"
+            ))}
+            <button
+              type="button"
+              onClick={() => onOpenMap?.(data)}
               style={{
                 flexShrink: 0, display: 'inline-flex', alignItems: 'center', gap: '6px',
-                textDecoration: 'none', fontWeight: '700', fontSize: '13px', padding: '12px 18px',
+                fontWeight: '700', fontSize: '13px', padding: '12px 18px',
                 borderRadius: '14px', border: '1px solid #e2e8f0', color: '#334155',
-                background: '#f8fafc', transition: 'all 0.2s ease', boxShadow: '0 2px 4px rgba(0,0,0,0.02)'
+                background: '#f8fafc', transition: 'all 0.2s ease', boxShadow: '0 2px 4px rgba(0,0,0,0.02)', cursor: 'pointer'
               }}
               onMouseOver={e => e.currentTarget.style.background = '#f1f5f9'}
-              onMouseOut={e => e.currentTarget.style.background = '#f8fafc'}>
+              onMouseOut={e => e.currentTarget.style.background = '#f8fafc'}
+            >
               <Navigation size={14} color="#475569" />
               <span>Maps</span>
-            </a>
+            </button>
             <button onClick={onClose} style={{
               flexShrink: 0, fontWeight: '700', fontSize: '13px', padding: '12px 18px',
               borderRadius: '14px', border: '1px solid #e2e8f0', color: '#334155',
@@ -301,6 +314,11 @@ export default function EvidenceModal({ data, onClose }) {
             onMouseOver={e => e.currentTarget.style.background = '#f1f5f9'}
             onMouseOut={e => e.currentTarget.style.background = '#f8fafc'}>Close</button>
           </div>
+          {dispatchError && canDispatch && (
+            <div role="alert" style={{ marginTop: 10, color: '#b91c1c', fontSize: 12, fontWeight: 700 }}>
+              {dispatchError}
+            </div>
+          )}
         </div>
       </div>
     </div>

@@ -244,8 +244,10 @@ is intentionally blocked; use **Login** with the account provisioned by the
 administrator instead.
 
 Only **Inspector**, **Authority**, and **Admin** accounts can open EnforceHub or
-call its dispatch/intervention endpoints. Only **Admin** can assign roles from
-the protected admin endpoints, and the backend checks the database role on every
+read enforcement recommendations. Only **Admin** can dispatch an Inspector and
+assign an intervention; Inspectors receive their assigned location details and
+map access without a dispatch control. Only **Admin** can assign roles from the
+protected admin endpoints, and the backend checks the database role on every
 protected request rather than trusting the browser profile.
 
 ### 3. Run the React Frontend (Terminal 2)
