@@ -3,6 +3,7 @@
 checkpoints/
 artifacts/
 *.pkl
+*.joblib
 *.csv
 __pycache__/
 *.pyc

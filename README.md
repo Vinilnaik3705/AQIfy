@@ -228,6 +228,26 @@ python -m uvicorn main:app --reload --port 8000
 ```
 *API documentation will run live at http://localhost:8000/docs*
 
+### Role-based access control
+
+Public registration always creates a **Citizen** account. A citizen cannot select
+or self-assign an Inspector, Authority, or Admin role.
+
+The initial administrator is the reserved account `admin@aqify.local`; its
+password is supplied only through `DEFAULT_ADMIN_PASSWORD` in the backend
+environment. Inspector and Authority reserved accounts are similarly created
+from `inspector@aqify.local` / `authority@aqify.local` and their corresponding
+environment passwords. In production, these values are required and must not
+be committed or shared in chat.
+If a reserved system email is entered on the registration screen, registration
+is intentionally blocked; use **Login** with the account provisioned by the
+administrator instead.
+
+Only **Inspector**, **Authority**, and **Admin** accounts can open EnforceHub or
+call its dispatch/intervention endpoints. Only **Admin** can assign roles from
+the protected admin endpoints, and the backend checks the database role on every
+protected request rather than trusting the browser profile.
+
 ### 3. Run the React Frontend (Terminal 2)
 ```powershell
 # Navigate to the frontend folder

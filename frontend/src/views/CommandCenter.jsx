@@ -1,15 +1,15 @@
 /* ── Command Center: live AQI map + detail panel ────────────────────────── */
 
 import { useState } from 'react'
-import { MapContainer, TileLayer, CircleMarker, Popup, Marker, ZoomControl } from 'react-leaflet'
+import { MapContainer, CircleMarker, Popup, Marker, ZoomControl } from 'react-leaflet'
 import 'leaflet/dist/leaflet.css'
-import { Search, Wind, Thermometer, Activity, MapPin, Factory, Car, Hammer, Flame, Leaf, Radio, Sun, Cloud, CloudRain, Moon, CloudMoon } from 'lucide-react'
+import { Wind, Thermometer, Activity, MapPin, Factory, Car, Hammer, Flame, Radio, Sun, Cloud, CloudRain, Moon, CloudMoon } from 'lucide-react'
 import { SOURCE_COLORS } from '../lib/constants'
 import { aqiColor, createAqiIcon } from '../lib/aqi'
-import { ChangeMapView } from '../components/map/MapParts'
+import { ChangeMapView, MapResizeHandler, ResilientTileLayer } from '../components/map/MapParts'
 import AqiGauge from '../components/AqiGauge'
 
-export default function CommandCenter({ state, selectedWard, forecast, onSelectWard, customPlaces, targetCenter, targetZoom, attribution = null }) {
+export default function CommandCenter({ state, selectedWard, forecast, onSelectWard, customPlaces, targetCenter, targetZoom, dataError = false }) {
   // Freeze "now" for this render pass (fallback timestamps only)
   const [mountedAt] = useState(() => Date.now())
 
@@ -27,7 +27,22 @@ export default function CommandCenter({ state, selectedWard, forecast, onSelectW
     waste_burning: <Flame size={13} color="#10b981" style={{ marginRight: '4px', verticalAlign: 'middle' }} />
   }
 
-  if (!state) return null;
+  if (!state) {
+    return (
+      <div className="map-data-fallback" role="status">
+        <MapPin size={28} color="#3b82f6" />
+        <strong>{dataError ? 'Air quality data is temporarily unavailable' : 'Air quality data is loading'}</strong>
+        <span>{dataError ? 'We could not load the live map data. Please try again when the service is available.' : 'Live map data will appear here once it is available.'}</span>
+      </div>
+    )
+  }
+
+  const sensors = Array.isArray(state.sensors) ? state.sensors : []
+  const wards = Array.isArray(state.wards) ? state.wards : []
+  const sources = Array.isArray(state.sources) ? state.sources : []
+  const mapCenter = Array.isArray(state.city?.center) && state.city.center.length >= 2
+    ? state.city.center
+    : [22.5, 79]
 
   // Resolve values for Left Column Card
   const temp = selectedWard?.weather?.temperature_c ?? state.weather?.temperature_c ?? 23;
@@ -42,8 +57,8 @@ export default function CommandCenter({ state, selectedWard, forecast, onSelectW
     pm25 = selectedWard.pollutants.pm25;
     pm10 = selectedWard.pollutants.pm10 || 15;
     no2 = selectedWard.pollutants.no2 || 10;
-  } else if (state.sensors.length > 0) {
-    const sensorsWithPm = state.sensors.filter(s => s.pollutants?.pm25 != null);
+  } else if (sensors.length > 0) {
+    const sensorsWithPm = sensors.filter(s => s.pollutants?.pm25 != null);
     if (sensorsWithPm.length > 0) {
       pm25 = sensorsWithPm.reduce((s, r) => s + r.pollutants.pm25, 0) / sensorsWithPm.length;
       pm10 = sensorsWithPm.reduce((s, r) => s + (r.pollutants.pm10 || 18), 0) / sensorsWithPm.length;
@@ -54,9 +69,12 @@ export default function CommandCenter({ state, selectedWard, forecast, onSelectW
   pm10 = Math.round(pm10);
   no2 = Math.round(no2);
 
-  const trendAqi = selectedWard?.aqi_in ?? selectedWard?.current_aqi ?? Math.round(state.sensors.reduce((s, r) => s + (r.aqi_in ?? r.aqi), 0) / state.sensors.length);
-  const selectedCityName = selectedWard?.name ?? state.city.name;
+  const trendAqi = selectedWard?.aqi_in ?? selectedWard?.current_aqi ?? (sensors.length
+    ? Math.round(sensors.reduce((s, r) => s + (r.aqi_in ?? r.aqi ?? 0), 0) / sensors.length)
+    : 0);
+  const selectedCityName = selectedWard?.name ?? state.city?.name ?? 'the selected area';
   const forecastWardId = selectedWard?.ward_key ?? selectedWard?.id ?? state.city_key ?? state.city?.key ?? state.city?.name;
+  const selectedWardAqi = selectedWard?.aqi_in ?? selectedWard?.current_aqi ?? selectedWard?.aqi;
 
   const hourlyForecastData = Array.isArray(forecast) && forecast.length > 0
     ? forecast.slice(0, 72).map((entry, idx) => {
@@ -154,7 +172,7 @@ export default function CommandCenter({ state, selectedWard, forecast, onSelectW
           {/* Left Column (Maximized Map) */}
           <div className="iqair-right-panel" style={{ flex: 1 }}>
             <MapContainer
-              center={state.city.center}
+              center={mapCenter}
               zoom={5}
               minZoom={4}
               maxBounds={[[6.0, 65.0], [38.0, 99.0]]}
@@ -163,21 +181,22 @@ export default function CommandCenter({ state, selectedWard, forecast, onSelectW
               zoomControl={false}
             >
               <ChangeMapView center={targetCenter} zoom={targetZoom} />
+              <MapResizeHandler />
 
-              {/* Dark Matter Basemap */}
-              <TileLayer
-                attribution="&copy; CARTO"
-                url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
-                noWrap={true}
-                updateWhenIdle={true}
-                keepBuffer={6}
-              />
+              <ResilientTileLayer />
 
               {/* Preset City Markers (Toggled by Stations) */}
-              {showStations && state.sensors.map(s => {
-                const ward = state.wards.find(w => w.id === s.ward_id)
+              {showStations && sensors.filter(s => Array.isArray(s.location) && s.location.length >= 2 && s.location.every(Number.isFinite)).map(s => {
+                const ward = wards.find(w => w.id === s.ward_id)
                 const placeLabel = ward ? ward.name : s.sensor_id
-                const aqiVal = s.aqi_in ?? s.aqi;
+                // The detailed ward request is the canonical value for the
+                // selected marker. The initial state snapshot can be older or
+                // come from a different provider, which previously made the
+                // marker disagree with the gauge on the right.
+                const isSelectedWard = selectedWard?.id && s.ward_id === selectedWard.id
+                const aqiVal = isSelectedWard && Number.isFinite(Number(selectedWardAqi))
+                  ? Number(selectedWardAqi)
+                  : (s.aqi_in ?? s.aqi)
                 const isWard = s.ward_id && s.ward_id.includes('_') && (
                   s.ward_id.startsWith('delhi_') || s.ward_id.startsWith('mumbai_') ||
                   s.ward_id.startsWith('bengaluru_') || s.ward_id.startsWith('chennai_') ||
@@ -205,7 +224,7 @@ export default function CommandCenter({ state, selectedWard, forecast, onSelectW
               })}
 
               {/* Custom Searched Places */}
-              {showStations && customPlaces && customPlaces.map(cp => {
+              {showStations && customPlaces && customPlaces.filter(cp => Array.isArray(cp.center) && cp.center.length >= 2 && cp.center.every(Number.isFinite)).map(cp => {
                 const aqiVal = cp.aqi_in ?? cp.current_aqi;
                 return (
                   <Marker
@@ -228,10 +247,38 @@ export default function CommandCenter({ state, selectedWard, forecast, onSelectW
                 )
               })}
 
-              {/* External fire tiles are intentionally disabled to avoid API-required overlays and keep the map fully local/off-grid. */}
+              {/* Fire anomalies use the backend's registered waste-burning /
+                  satellite-anomaly source records, so they do not depend on
+                  an API-key-required external fire tile layer. */}
+              {showFires && sources
+                .filter(src => src.category === 'waste_burning' && Array.isArray(src.location) && src.location.length >= 2 && src.location.every(Number.isFinite))
+                .map((src, index) => {
+                  const sourceKey = `${src.city_key || src.city || 'global'}-${src.id || src.name || index}`
+                  return (
+                    <CircleMarker
+                      key={`fire-cc-${sourceKey}`}
+                      center={src.location}
+                      radius={11}
+                      pathOptions={{
+                        fillColor: '#ef4444',
+                        fillOpacity: 0.88,
+                        color: '#ffffff',
+                        weight: 2,
+                      }}
+                    >
+                      <Popup>
+                        <div style={{ color: '#0f172a', fontSize: '12px' }}>
+                          <strong style={{ fontSize: '13px' }}>{src.name || 'Fire anomaly'}</strong><br />
+                          Type: <strong>Waste burning / fire anomaly</strong><br />
+                          Emission estimate: <strong>{src.Q ?? src.emission_rate_Q ?? 0} g/s</strong>
+                        </div>
+                      </Popup>
+                    </CircleMarker>
+                  )
+                })}
 
               {/* Registered Emission Sources (Toggled by Factories, Vehicular, Construction) */}
-              {state.sources && state.sources.map((src, index) => {
+              {sources.filter(src => Array.isArray(src.location) && src.location.length >= 2 && src.location.every(Number.isFinite)).map((src, index) => {
                 const visible =
                   (src.category === 'industrial' && showFactories) ||
                   (src.category === 'vehicular' && showVehicular) ||
@@ -664,7 +711,7 @@ export default function CommandCenter({ state, selectedWard, forecast, onSelectW
                 no2Val = selectedWard.pollutants.no2 || 12;
                 o3Val = selectedWard.pollutants.o3 || 45;
               } else {
-                const wardSensors = state.sensors.filter(s => s.ward_id === selectedWard.id)
+                const wardSensors = sensors.filter(s => s.ward_id === selectedWard.id)
                 if (wardSensors.length > 0) {
                   const avg = (key) =>
                     Math.round(wardSensors.reduce((s, r) => s + (r.pollutants[key] || 0), 0) / wardSensors.length)
@@ -711,115 +758,6 @@ export default function CommandCenter({ state, selectedWard, forecast, onSelectW
               )
             })()}
 
-            {/* ── Source Attribution Agent ──────────────── */}
-            {(() => {
-              // Seeding function to generate different/unique values for different cities/wards
-              const getSeededSources = (seedStr) => {
-                let hash = 0;
-                for (let i = 0; i < seedStr.length; i++) {
-                  hash = seedStr.charCodeAt(i) + ((hash << 5) - hash);
-                }
-                const r1 = Math.abs(hash % 30) + 15;        // 15-45
-                const r2 = Math.abs((hash >> 2) % 25) + 12;   // 12-37
-                const r3 = Math.abs((hash >> 4) % 20) + 8;    // 8-28
-                const r4 = Math.abs((hash >> 6) % 12) + 5;    // 5-17
-                const r5 = 100 - (r1 + r2 + r3 + r4);
-
-                return [
-                  { label: 'Industrial', pct: r1, color: '#ef4444', icon: <Factory size={12} color="#ef4444" /> },
-                  { label: 'Vehicular', pct: r2, color: '#3b82f6', icon: <Car size={12} color="#3b82f6" /> },
-                  { label: 'Construction', pct: r3, color: '#f59e0b', icon: <Hammer size={12} color="#f59e0b" /> },
-                  { label: 'Waste Burning', pct: r4, color: '#10b981', icon: <Flame size={12} color="#10b981" /> },
-                  { label: 'Background', pct: Math.max(0, r5), color: '#64748b', icon: <Leaf size={12} color="#64748b" /> },
-                ].sort((a, b) => b.pct - a.pct);
-              };
-
-              const getRealSources = (ward) => {
-                if (!ward || !state.sources) return getSeededSources(ward?.name || 'Default');
-                const localSources = state.sources.filter(src => {
-                  if (!src.location || !ward.center) return false;
-                  const dLat = src.location[0] - ward.center[0];
-                  const dLng = src.location[1] - ward.center[1];
-                  const dist = Math.sqrt(dLat * dLat + dLng * dLng) * 111;
-                  return dist <= 25; // 25km radius
-                });
-                if (localSources.length === 0) {
-                  return getSeededSources(ward.name);
-                }
-                const sums = { industrial: 0, vehicular: 0, construction: 0, waste_burning: 0, background: 0 };
-                let totalQ = 0;
-                localSources.forEach(src => {
-                  const cat = src.category || 'background';
-                  const q = src.Q ?? src.emission_rate_Q ?? 0;
-                  if (sums[cat] !== undefined) {
-                    sums[cat] += q;
-                    totalQ += q;
-                  }
-                });
-                if (totalQ === 0) {
-                  sums.background = 15;
-                  totalQ = 15;
-                } else {
-                  sums.background = totalQ * 0.12;
-                  totalQ += sums.background;
-                }
-                return [
-                  { label: 'Industrial', pct: Math.round((sums.industrial / totalQ) * 100), color: '#ef4444', icon: <Factory size={12} color="#ef4444" /> },
-                  { label: 'Vehicular', pct: Math.round((sums.vehicular / totalQ) * 100), color: '#3b82f6', icon: <Car size={12} color="#3b82f6" /> },
-                  { label: 'Construction', pct: Math.round((sums.construction / totalQ) * 100), color: '#f59e0b', icon: <Hammer size={12} color="#f59e0b" /> },
-                  { label: 'Waste Burning', pct: Math.round((sums.waste_burning / totalQ) * 100), color: '#10b981', icon: <Flame size={12} color="#10b981" /> },
-                  { label: 'Background', pct: Math.round((sums.background / totalQ) * 100), color: '#64748b', icon: <Leaf size={12} color="#64748b" /> },
-                ].sort((a, b) => b.pct - a.pct);
-              };
-
-              const displaySources = (attribution && attribution.sources) ? attribution.sources.map(s => {
-                const category = s.category || s.label?.toLowerCase() || 'background';
-                return {
-                  label: s.label || category.charAt(0).toUpperCase() + category.slice(1).replace('_', ' '),
-                  pct: Math.round(s.percentage),
-                  color: SOURCE_COLORS[category] || '#64748b',
-                  icon: category === 'industrial' ? <Factory size={12} color="#ef4444" /> :
-                    category === 'vehicular' ? <Car size={12} color="#3b82f6" /> :
-                      category === 'construction' ? <Hammer size={12} color="#f59e0b" /> :
-                        category === 'waste_burning' ? <Flame size={12} color="#10b981" /> :
-                          <Leaf size={12} color="#64748b" />
-                };
-              }).sort((a, b) => b.pct - a.pct) : getRealSources(selectedWard);
-
-              return (
-                <div style={{ borderTop: '1px solid var(--border)', paddingTop: '16px', marginTop: '4px' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '14px' }}>
-                    <div style={{ width: '28px', height: '28px', borderRadius: '8px', background: 'linear-gradient(135deg, #8b5cf6 0%, #3b82f6 100%)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                      <Search size={14} color="#ffffff" />
-                    </div>
-                    <div>
-                      <div style={{ fontSize: '13px', fontWeight: '750', color: '#0f172a' }}>SourceIQ</div>
-                    </div>
-                  </div>
-
-                  {/* Stacked bar */}
-                  <div style={{ display: 'flex', height: '8px', borderRadius: '4px', overflow: 'hidden', marginBottom: '12px' }}>
-                    {displaySources.map((s, i) => (
-                      <div key={i} style={{ width: `${s.pct}%`, background: s.color, transition: 'width 0.6s ease' }} />
-                    ))}
-                  </div>
-
-                  {/* Source list */}
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                    {displaySources.map((s, i) => (
-                      <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px' }}>
-                        <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: '20px' }}>{s.icon}</span>
-                        <span style={{ flex: 1, fontWeight: '600', color: '#334155' }}>{s.label}</span>
-                        <div style={{ width: '60px', height: '5px', background: '#f1f5f9', borderRadius: '3px', overflow: 'hidden' }}>
-                          <div style={{ width: `${s.pct}%`, height: '100%', background: s.color, borderRadius: '3px', transition: 'width 0.6s ease' }} />
-                        </div>
-                        <span style={{ fontWeight: '700', color: s.color, minWidth: '32px', textAlign: 'right' }}>{s.pct}%</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              );
-            })()}
           </div>
 
         ) : (

@@ -27,6 +27,8 @@ import asyncio
 import math
 
 import random
+import hashlib
+from contextlib import asynccontextmanager
 
 import time
 
@@ -106,7 +108,23 @@ def safe_print(*args, **kwargs) -> None:
 
 
 
-HTTP_CLIENT = httpx.AsyncClient(timeout=12.0)
+HTTP_CLIENT = httpx.AsyncClient(
+    timeout=httpx.Timeout(connect=5.0, read=12.0, write=8.0, pool=15.0),
+    limits=httpx.Limits(max_connections=16, max_keepalive_connections=8),
+)
+
+
+def _stable_seed(value: str) -> int:
+    return int(hashlib.sha256(value.encode("utf-8")).hexdigest()[:16], 16)
+
+
+async def close_simulation_http_client() -> None:
+    await HTTP_CLIENT.aclose()
+
+
+@asynccontextmanager
+async def _shared_http_client():
+    yield HTTP_CLIENT
 
 
 
@@ -995,7 +1013,7 @@ async def _fetch_real_aqi_waqi(lat: float, lng: float) -> Optional[Dict[str, Any
 
     try:
 
-        async with httpx.AsyncClient(timeout=8.0) as client:
+        async with _shared_http_client() as client:
 
             # Geo endpoint: finds nearest monitoring station to these coordinates
 
@@ -1437,7 +1455,7 @@ async def _fetch_real_aqi(lat: float, lng: float) -> Optional[Dict[str, Any]]:
 
     try:
 
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with _shared_http_client() as client:
 
             resp = await client.get(AQ_API_URL, params={
 
@@ -1509,7 +1527,7 @@ async def _fetch_real_aqi(lat: float, lng: float) -> Optional[Dict[str, Any]]:
 
         try:
 
-            async with httpx.AsyncClient(timeout=8.0) as client:
+            async with _shared_http_client() as client:
 
                 # Query locations within 25km (max OpenAQ v3 radius is 25000m)
 
@@ -1729,7 +1747,7 @@ async def _fetch_live_weather(lat: float, lng: float) -> Optional[Dict[str, Any]
 
     try:
 
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with _shared_http_client() as client:
 
             resp = await client.get(WEATHER_API_URL, params={
 
@@ -1779,7 +1797,7 @@ async def _fetch_real_forecast(lat: float, lng: float, hours: int = 72) -> Optio
 
     try:
 
-        async with httpx.AsyncClient(timeout=5.0) as client:
+        async with _shared_http_client() as client:
 
             resp = await client.get(AQ_API_URL, params={
 
@@ -1935,7 +1953,7 @@ def get_sources_for_city(city_key: str) -> List[Dict[str, Any]]:
 
         # Generate diverse, city-specific emission sources using seeded randomization
 
-        rng = random.Random(hash(city_key))
+        rng = random.Random(_stable_seed(city_key))
 
         sources = []
 
@@ -2127,9 +2145,19 @@ class SimulationEngine:
 
         self._cache_ts: Dict[str, float] = {}
 
+        # Cache keys include request-selected city/hour values, so keep the
+        # in-process cache bounded even if callers send many distinct keys.
+        self._cache_max_entries = max(32, int(os.getenv("SIMULATION_CACHE_MAX_ENTRIES", "256")))
+
         self._cache_ttl = 900  # 15-minute cache for readings (APIs update hourly)
 
         self._forecast_cache_ttl = 1800  # 30-minute cache for forecasts
+
+        # Coalesce simultaneous cache misses. Without this, React StrictMode,
+        # the forecast route, and background alert checks can all start the same
+        # provider fan-out before the first caller has filled the cache.
+        self._readings_in_flight: Dict[str, asyncio.Task] = {}
+        self._forecasts_in_flight: Dict[str, asyncio.Task] = {}
 
 
 
@@ -2249,6 +2277,16 @@ class SimulationEngine:
 
         return key in self._cache and (time.time() - self._cache_ts.get(key, 0)) < ttl
 
+    def _store_cache(self, key: str, value: Any) -> None:
+        """Store a simulation result while evicting the oldest entries."""
+        now = time.time()
+        self._cache[key] = value
+        self._cache_ts[key] = now
+        while len(self._cache) > self._cache_max_entries:
+            oldest_key = min(self._cache_ts, key=self._cache_ts.get)
+            self._cache.pop(oldest_key, None)
+            self._cache_ts.pop(oldest_key, None)
+
 
 
     def invalidate_cache(self, prefix: str = None):
@@ -2279,11 +2317,26 @@ class SimulationEngine:
 
     async def generate_readings(
 
-        self, city_key: str = DEFAULT_CITY, force_refresh: bool = False
+        self, city_key: str = DEFAULT_CITY, force_refresh: bool = False,
+        _skip_inflight: bool = False,
 
     ) -> List[Dict[str, Any]]:
 
         """Generate AQI readings — fetches REAL data via the hybrid OpenAQ v3 / Open-Meteo pipeline."""
+
+        if not _skip_inflight:
+            in_flight = self._readings_in_flight.get(city_key)
+            if in_flight is not None:
+                return await asyncio.shield(in_flight)
+            task = asyncio.create_task(
+                self.generate_readings(city_key, force_refresh=force_refresh, _skip_inflight=True)
+            )
+            self._readings_in_flight[city_key] = task
+            try:
+                return await asyncio.shield(task)
+            finally:
+                if self._readings_in_flight.get(city_key) is task:
+                    self._readings_in_flight.pop(city_key, None)
 
         cache_key = f"readings_{city_key}"
 
@@ -2335,9 +2388,14 @@ class SimulationEngine:
             except Exception as e:
                 safe_print("Open-Meteo multi-location batch fetch failed:", e)
 
-            # 2. Parallel OpenWeatherMap live per-coordinate fetch for ALL cities & wards
+            # 2. Parallel OpenWeatherMap live fetch for parent cities
             owm_readings_map = {}
-            sem = asyncio.Semaphore(15)
+            # Query only parent cities from OpenWeather. Ward-level readings are
+            # spatially calibrated from the parent result and Open-Meteo grid;
+            # querying every ward created 74 requests per refresh and regularly
+            # exceeded free-tier provider limits.
+            owm_keys = [k for k in all_keys if "_" not in k]
+            sem = asyncio.Semaphore(8)
 
             async def fetch_owm_location(k):
                 async with sem:
@@ -2346,7 +2404,7 @@ class SimulationEngine:
                     if owm_data:
                         owm_readings_map[k] = owm_data
 
-            await asyncio.gather(*(fetch_owm_location(k) for k in all_keys), return_exceptions=True)
+            await asyncio.gather(*(fetch_owm_location(k) for k in owm_keys), return_exceptions=True)
 
             # 3. Assemble readings for every single key in CITIES
             for k in all_keys:
@@ -2413,18 +2471,6 @@ class SimulationEngine:
 
 
 
-                    # Regional NCR atmospheric basin calibration
-
-                    if parent_key in ncr_cities and avg_ncr_ground and avg_ncr_ground > 100.0:
-
-                        ncr_scale = max(0.8, min(1.2, aqi_val / 100.0))
-
-                        aqi_val = max(50.0, min(500.0, avg_ncr_ground * ncr_scale))
-
-                        read_source = "open-meteo cams (ncr basin calibrated)"
-
-
-
                     aq_data = {
 
                         "aqi": round(aqi_val, 1),
@@ -2441,7 +2487,7 @@ class SimulationEngine:
 
                         "o3": round(cal["o3"], 1),
 
-                        "source": read_source,
+                        "source": "open-meteo cams",
 
                     }
 
@@ -2451,7 +2497,7 @@ class SimulationEngine:
 
                     # Dynamic procedural baseline estimation fallback
 
-                    rng_fb = random.Random(hash(f"{k}_fb"))
+                    rng_fb = random.Random(_stable_seed(f"{k}_fb"))
 
                     base_pm25 = rng_fb.uniform(15.0, 45.0)
 
@@ -2470,10 +2516,10 @@ class SimulationEngine:
                     }
 
                 h_seed = ts.hour + ts.minute // 10
-                rng_wind = random.Random(hash(f"{k}_{h_seed}"))
+                rng_wind = random.Random(_stable_seed(f"{k}_{h_seed}"))
                 ws = rng_wind.uniform(1.5, 6.0)
                 wd = rng_wind.uniform(0.0, 360.0)
-                self._cache[f"wind_{k}"] = (ws, wd)
+                self._store_cache(f"wind_{k}", (ws, wd))
 
                 r_entry = {
                     "sensor_id": f"SENSOR_{k}",
@@ -2497,8 +2543,7 @@ class SimulationEngine:
             # Store individual city readings in cache
             for r in readings:
                 k = r["ward_id"]
-                self._cache[f"readings_{k}"] = [r]
-                self._cache_ts[f"readings_{k}"] = time.time()
+                self._store_cache(f"readings_{k}", [r])
 
 
 
@@ -2520,13 +2565,13 @@ class SimulationEngine:
 
                 h_seed = ts.hour + ts.minute // 10
 
-                rng_wind = random.Random(hash(f"{city_key}_{h_seed}"))
+                rng_wind = random.Random(_stable_seed(f"{city_key}_{h_seed}"))
 
                 ws = rng_wind.uniform(1.5, 6.0)
 
                 wd = rng_wind.uniform(0.0, 360.0)
 
-                self._cache[f"wind_{city_key}"] = (ws, wd)
+                self._store_cache(f"wind_{city_key}", (ws, wd))
 
 
 
@@ -2582,9 +2627,7 @@ class SimulationEngine:
 
 
 
-        self._cache[cache_key] = readings
-
-        self._cache_ts[cache_key] = time.time()
+        self._store_cache(cache_key, readings)
 
         return readings
 
@@ -2592,13 +2635,27 @@ class SimulationEngine:
 
     async def generate_forecast(
 
-        self, city_key: str = DEFAULT_CITY, hours: int = 24, force_refresh: bool = False
+        self, city_key: str = DEFAULT_CITY, hours: int = 24, force_refresh: bool = False,
+        _skip_inflight: bool = False,
 
     ) -> List[Dict[str, Any]]:
 
         """Generate city AQI forecast using Open-Meteo hourly forecast API."""
 
         cache_key = f"forecast_{city_key}_{hours}"
+        if not _skip_inflight:
+            in_flight = self._forecasts_in_flight.get(cache_key)
+            if in_flight is not None:
+                return await asyncio.shield(in_flight)
+            task = asyncio.create_task(
+                self.generate_forecast(city_key, hours, force_refresh=force_refresh, _skip_inflight=True)
+            )
+            self._forecasts_in_flight[cache_key] = task
+            try:
+                return await asyncio.shield(task)
+            finally:
+                if self._forecasts_in_flight.get(cache_key) is task:
+                    self._forecasts_in_flight.pop(cache_key, None)
 
         if not force_refresh and self._is_cached(cache_key, self._forecast_cache_ttl):
 
@@ -2656,7 +2713,7 @@ class SimulationEngine:
 
                 }
 
-                async with httpx.AsyncClient(timeout=25.0) as client:
+                async with _shared_http_client() as client:
 
                     resp = await client.get(url, params=params)
 
@@ -2754,7 +2811,7 @@ class SimulationEngine:
 
                         
 
-                    rng_wind = random.Random(hash(f"{k}_fc_{h}"))
+                    rng_wind = random.Random(_stable_seed(f"{k}_fc_{h}"))
 
                     ws = rng_wind.uniform(1.5, 6.0)
 
@@ -2800,7 +2857,7 @@ class SimulationEngine:
 
                     
 
-                    rng_wind = random.Random(hash(f"{k}_fc_{h}"))
+                    rng_wind = random.Random(_stable_seed(f"{k}_fc_{h}"))
 
                     ws = rng_wind.uniform(1.5, 6.0)
 
@@ -2850,9 +2907,7 @@ class SimulationEngine:
 
                 
 
-            self._cache[cache_key] = grid
-
-            self._cache_ts[cache_key] = time.time()
+            self._store_cache(cache_key, grid)
 
             return grid
 
@@ -2870,7 +2925,7 @@ class SimulationEngine:
 
         try:
 
-            async with httpx.AsyncClient(timeout=15.0) as client:
+            async with _shared_http_client() as client:
 
                 resp = await client.get(AQ_API_URL, params={
 
@@ -2938,7 +2993,7 @@ class SimulationEngine:
 
 
 
-                rng_wind = random.Random(hash(f"{city_key}_fc_{h}"))
+                rng_wind = random.Random(_stable_seed(f"{city_key}_fc_{h}"))
 
                 ws = rng_wind.uniform(1.5, 6.0)
 
@@ -2984,7 +3039,7 @@ class SimulationEngine:
 
                 future = now + timedelta(hours=h)
 
-                rng_wind = random.Random(hash(f"{city_key}_fc_{h}"))
+                rng_wind = random.Random(_stable_seed(f"{city_key}_fc_{h}"))
 
                 ws = rng_wind.uniform(1.5, 6.0)
 
@@ -3028,9 +3083,7 @@ class SimulationEngine:
 
 
 
-        self._cache[cache_key] = grid
-
-        self._cache_ts[cache_key] = time.time()
+        self._store_cache(cache_key, grid)
 
         return grid
 
@@ -3046,7 +3099,7 @@ class SimulationEngine:
 
 
 
-        rng = random.Random(hash(city_key))
+        rng = random.Random(_stable_seed(city_key))
 
         population = rng.randint(250000, 1800000) if "_" in city_key else rng.randint(4000000, 15000000)
 

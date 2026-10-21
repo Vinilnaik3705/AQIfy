@@ -4,6 +4,7 @@ from enum import Enum
 
 from sqlalchemy import (
     Boolean,
+    CheckConstraint,
     Column,
     DateTime,
     Float,
@@ -14,6 +15,9 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     create_engine,
+    Enum as SAEnum,
+    inspect,
+    text,
 )
 from sqlalchemy.orm import declarative_base, relationship, sessionmaker
 
@@ -36,7 +40,7 @@ class UserRole(str, Enum):
 class Role(Base):
     __tablename__ = "roles"
 
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(Integer, primary_key=True)
     name = Column(String(50), unique=True, nullable=False)
     description = Column(String(255), nullable=True)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
@@ -47,8 +51,8 @@ class Role(Base):
 class User(Base):
     __tablename__ = "users"
 
-    id = Column(Integer, primary_key=True, index=True)
-    email = Column(String(255), unique=True, index=True, nullable=False)
+    id = Column(Integer, primary_key=True)
+    email = Column(String(255), nullable=False)
     full_name = Column(String(255), nullable=True)
     password_hash = Column(String(255), nullable=False)
     role_id = Column(Integer, ForeignKey("roles.id"), nullable=False, index=True)
@@ -67,7 +71,7 @@ class User(Base):
 class Location(Base):
     __tablename__ = "locations"
 
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(Integer, primary_key=True)
     city_key = Column(String(80), index=True, nullable=False)
     name = Column(String(180), nullable=False)
     state = Column(String(120), nullable=True)
@@ -78,15 +82,17 @@ class Location(Base):
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
     updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), nullable=False)
 
-    pollution_readings = relationship("PollutionReading", back_populates="location")
-    weather_readings = relationship("WeatherReading", back_populates="location")
-    forecasts = relationship("Forecast", back_populates="location")
-    subscriptions = relationship("AlertSubscription", back_populates="location")
+    pollution_readings = relationship("PollutionReading", back_populates="location", passive_deletes=True)
+    weather_readings = relationship("WeatherReading", back_populates="location", passive_deletes=True)
+    forecasts = relationship("Forecast", back_populates="location", cascade="all, delete-orphan")
+    subscriptions = relationship("AlertSubscription", back_populates="location", cascade="all, delete-orphan")
     alerts = relationship("Alert", back_populates="location")
     interventions = relationship("Intervention", back_populates="location")
     inspectors = relationship("Inspector", back_populates="location")
 
     __table_args__ = (
+        CheckConstraint("latitude >= -90 AND latitude <= 90", name="ck_locations_latitude_range"),
+        CheckConstraint("longitude >= -180 AND longitude <= 180", name="ck_locations_longitude_range"),
         Index("ix_locations_city_lat_lng", "city_key", "latitude", "longitude"),
     )
 
@@ -94,7 +100,7 @@ class Location(Base):
 class PollutionReading(Base):
     __tablename__ = "pollution_readings"
 
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(Integer, primary_key=True)
     location_id = Column(Integer, ForeignKey("locations.id"), nullable=False, index=True)
     timestamp = Column(DateTime(timezone=True), nullable=False, index=True)
     aqi = Column(Float, nullable=False)
@@ -110,13 +116,24 @@ class PollutionReading(Base):
 
     location = relationship("Location", back_populates="pollution_readings")
 
-    __table_args__ = (Index("ix_pollution_readings_location_time", "location_id", "timestamp"),)
+    __table_args__ = (
+        CheckConstraint("aqi >= 0 AND aqi <= 500", name="ck_pollution_readings_aqi_range"),
+        CheckConstraint("aqi_in IS NULL OR (aqi_in >= 0 AND aqi_in <= 500)", name="ck_pollution_readings_aqi_in_range"),
+        CheckConstraint("pm25 IS NULL OR pm25 >= 0", name="ck_pollution_readings_pm25_nonnegative"),
+        CheckConstraint("pm10 IS NULL OR pm10 >= 0", name="ck_pollution_readings_pm10_nonnegative"),
+        CheckConstraint("no2 IS NULL OR no2 >= 0", name="ck_pollution_readings_no2_nonnegative"),
+        CheckConstraint("so2 IS NULL OR so2 >= 0", name="ck_pollution_readings_so2_nonnegative"),
+        CheckConstraint("o3 IS NULL OR o3 >= 0", name="ck_pollution_readings_o3_nonnegative"),
+        CheckConstraint("co IS NULL OR co >= 0", name="ck_pollution_readings_co_nonnegative"),
+        UniqueConstraint("location_id", "timestamp", name="uq_pollution_location_timestamp"),
+        Index("ix_pollution_readings_location_time", "location_id", "timestamp"),
+    )
 
 
 class WeatherReading(Base):
     __tablename__ = "weather_readings"
 
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(Integer, primary_key=True)
     location_id = Column(Integer, ForeignKey("locations.id"), nullable=False, index=True)
     timestamp = Column(DateTime(timezone=True), nullable=False, index=True)
     temperature_c = Column(Float, nullable=True)
@@ -128,13 +145,19 @@ class WeatherReading(Base):
 
     location = relationship("Location", back_populates="weather_readings")
 
-    __table_args__ = (Index("ix_weather_readings_location_time", "location_id", "timestamp"),)
+    __table_args__ = (
+        CheckConstraint("humidity_pct IS NULL OR (humidity_pct >= 0 AND humidity_pct <= 100)", name="ck_weather_readings_humidity_range"),
+        CheckConstraint("wind_speed_kmh IS NULL OR wind_speed_kmh >= 0", name="ck_weather_readings_wind_speed_nonnegative"),
+        CheckConstraint("precipitation_mm IS NULL OR precipitation_mm >= 0", name="ck_weather_readings_precipitation_nonnegative"),
+        UniqueConstraint("location_id", "timestamp", name="uq_weather_location_timestamp"),
+        Index("ix_weather_readings_location_time", "location_id", "timestamp"),
+    )
 
 
 class Forecast(Base):
     __tablename__ = "forecasts"
 
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(Integer, primary_key=True)
     location_id = Column(Integer, ForeignKey("locations.id"), nullable=False, index=True)
     forecast_time = Column(DateTime(timezone=True), nullable=False, index=True)
     predicted_aqi = Column(Float, nullable=False)
@@ -145,15 +168,26 @@ class Forecast(Base):
 
     location = relationship("Location", back_populates="forecasts")
 
-    __table_args__ = (Index("ix_forecasts_location_time", "location_id", "forecast_time"),)
+    __table_args__ = (
+        CheckConstraint("predicted_aqi >= 0 AND predicted_aqi <= 500", name="ck_forecasts_predicted_aqi_range"),
+        CheckConstraint("confidence IS NULL OR (confidence >= 0 AND confidence <= 1)", name="ck_forecasts_confidence_range"),
+        Index("ix_forecasts_location_time", "location_id", "forecast_time"),
+    )
 
 
 class AlertSubscription(Base):
     __tablename__ = "alert_subscriptions"
 
-    id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
-    location_id = Column(Integer, ForeignKey("locations.id"), nullable=False, index=True)
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    location_id = Column(Integer, ForeignKey("locations.id"), nullable=True, index=True)
+    ward_id = Column(String(120), nullable=True, index=True)
+    email = Column(String(255), nullable=True, index=True)
+    profile = Column(String(50), nullable=True)
+    confirm_token = Column(String(64), unique=True, nullable=True, index=True)
+    confirmed = Column(Boolean, default=True, nullable=False)
+    last_alerted_aqi = Column(Float, default=0.0, nullable=False)
+    lang = Column(String(10), default="en", nullable=False)
     threshold_aqi = Column(Float, default=100.0, nullable=False)
     forecast_threshold = Column(Float, default=150.0, nullable=False)
     spike_threshold = Column(Float, default=30.0, nullable=False)
@@ -167,6 +201,7 @@ class AlertSubscription(Base):
 
     __table_args__ = (
         UniqueConstraint("user_id", "location_id", name="uq_user_location_subscription"),
+        UniqueConstraint("email", "ward_id", name="uq_public_email_ward_subscription"),
         Index("ix_alert_subscriptions_user_active", "user_id", "is_active"),
     )
 
@@ -174,7 +209,7 @@ class AlertSubscription(Base):
 class Alert(Base):
     __tablename__ = "alerts"
 
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
     location_id = Column(Integer, ForeignKey("locations.id"), nullable=False, index=True)
     alert_type = Column(String(50), nullable=False, index=True)
@@ -193,7 +228,7 @@ class Alert(Base):
 class Inspector(Base):
     __tablename__ = "inspectors"
 
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey("users.id"), unique=True, nullable=False, index=True)
     location_id = Column(Integer, ForeignKey("locations.id"), nullable=True, index=True)
     badge_number = Column(String(80), unique=True, nullable=True)
@@ -213,17 +248,46 @@ class InterventionStatus(str, Enum):
     RESOLVED = "resolved"
 
 
+class InterventionSeverity(str, Enum):
+    MODERATE = "moderate"
+    VERY_POOR = "very_poor"
+    SEVERE = "severe"
+
+
 class Intervention(Base):
     __tablename__ = "interventions"
 
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(Integer, primary_key=True)
     location_id = Column(Integer, ForeignKey("locations.id"), nullable=False, index=True)
     aqi = Column(Float, nullable=False)
-    severity = Column(String(30), nullable=False, index=True)
+    severity = Column(
+        SAEnum(
+            InterventionSeverity,
+            name="intervention_severity",
+            native_enum=False,
+            create_constraint=True,
+            validate_strings=True,
+            values_callable=lambda enum_cls: [item.value for item in enum_cls],
+        ),
+        nullable=False,
+        index=True,
+    )
     suspected_source = Column(String(255), nullable=True)
     description = Column(Text, nullable=False)
     assigned_inspector_id = Column(Integer, ForeignKey("inspectors.id"), nullable=True, index=True)
-    status = Column(String(30), default=InterventionStatus.PENDING.value, nullable=False, index=True)
+    status = Column(
+        SAEnum(
+            InterventionStatus,
+            name="intervention_status",
+            native_enum=False,
+            create_constraint=True,
+            validate_strings=True,
+            values_callable=lambda enum_cls: [item.value for item in enum_cls],
+        ),
+        default=InterventionStatus.PENDING.value,
+        nullable=False,
+        index=True,
+    )
     priority_score = Column(Float, default=0.0, nullable=False)
     recommendation = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
@@ -234,11 +298,16 @@ class Intervention(Base):
     findings = relationship("InvestigationFinding", back_populates="intervention", cascade="all, delete-orphan")
     outcome = relationship("InterventionOutcome", back_populates="intervention", uselist=False, cascade="all, delete-orphan")
 
+    __table_args__ = (
+        CheckConstraint("aqi >= 0 AND aqi <= 500", name="ck_interventions_aqi_range"),
+        CheckConstraint("priority_score >= 0", name="ck_interventions_priority_nonnegative"),
+    )
+
 
 class InvestigationFinding(Base):
     __tablename__ = "investigation_findings"
 
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(Integer, primary_key=True)
     intervention_id = Column(Integer, ForeignKey("interventions.id"), nullable=False, index=True)
     inspector_id = Column(Integer, ForeignKey("inspectors.id"), nullable=True, index=True)
     findings = Column(Text, nullable=False)
@@ -251,7 +320,7 @@ class InvestigationFinding(Base):
 class InterventionOutcome(Base):
     __tablename__ = "intervention_outcomes"
 
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(Integer, primary_key=True)
     intervention_id = Column(Integer, ForeignKey("interventions.id"), nullable=False, unique=True, index=True)
     aqi_before = Column(Float, nullable=False)
     aqi_after = Column(Float, nullable=False)
@@ -271,6 +340,50 @@ Inspector.findings = relationship("InvestigationFinding", back_populates="inspec
 
 def init_db() -> None:
     Base.metadata.create_all(bind=engine)
+    _ensure_legacy_sqlite_columns()
+
+
+def _ensure_legacy_sqlite_columns() -> None:
+    """Bring older local SQLite databases up to the current model shape.
+
+    ``create_all`` intentionally does not alter existing tables. A previously
+    created local ``aqify.db`` therefore lacked the public subscription fields,
+    and any User delete/update could fail while SQLAlchemy loaded the related
+    subscriptions. Production deployments should use Alembic migrations; this
+    idempotent compatibility step keeps local development and existing demo
+    databases usable when migrations have not been run yet.
+    """
+    if engine.dialect.name != "sqlite":
+        return
+
+    inspector = inspect(engine)
+    if "alert_subscriptions" not in inspector.get_table_names():
+        return
+
+    existing = {column["name"] for column in inspector.get_columns("alert_subscriptions")}
+    missing = {
+        "ward_id": "VARCHAR(120)",
+        "email": "VARCHAR(255)",
+        "profile": "VARCHAR(50)",
+        "confirm_token": "VARCHAR(64)",
+        "confirmed": "BOOLEAN NOT NULL DEFAULT 1",
+        "last_alerted_aqi": "FLOAT NOT NULL DEFAULT 0",
+        "lang": "VARCHAR(10) NOT NULL DEFAULT 'en'",
+    }
+
+    with engine.begin() as connection:
+        for name, definition in missing.items():
+            if name not in existing:
+                connection.execute(text(f"ALTER TABLE alert_subscriptions ADD COLUMN {name} {definition}"))
+
+        connection.execute(text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_alert_subscriptions_confirm_token "
+            "ON alert_subscriptions (confirm_token)"
+        ))
+        connection.execute(text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_public_email_ward_subscription "
+            "ON alert_subscriptions (email, ward_id)"
+        ))
 
 
 def get_db_session():

@@ -5,23 +5,33 @@ services:
     plan: standard
     rootDir: .
     buildCommand: "pip install -r backend/requirements.txt"
-    startCommand: "cd backend && uvicorn main:app --host 0.0.0.0 --port $PORT"
+    # Keep one web process; model training is serialized and startup training
+    # is disabled so a Render web instance does not spawn duplicate workers.
+    startCommand: "cd backend && uvicorn main:app --host 0.0.0.0 --port $PORT --workers 1"
     envVars:
       - key: PYTHON_VERSION
         value: "3.13.5"
+      - key: APP_ENV
+        value: production
+      - key: ENABLE_BACKGROUND_JOBS
+        value: "true"
+      - key: ENABLE_STARTUP_TRAINING
+        value: "false"
+      - key: STARTUP_TRAIN_CITIES
+        value: "delhi"
+      - key: MODEL_CACHE_MAX_CITIES
+        value: "4"
       - key: DATABASE_URL
         sync: false
       - key: JWT_SECRET
-        generateValue: true
-      - key: SECRET_KEY
         generateValue: true
       - key: PUBLIC_BASE_URL
         sync: false
       - key: CORS_ORIGINS
         sync: false
       - key: DEFAULT_ADMIN_PASSWORD
-        value: "Admin@12345"
+        sync: false
       - key: DEFAULT_AUTHORITY_PASSWORD
-        value: "Authority@12345"
+        sync: false
       - key: DEFAULT_INSPECTOR_PASSWORD
-        value: "Inspector@12345"
+        sync: false

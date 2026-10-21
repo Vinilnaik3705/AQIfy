@@ -5,8 +5,7 @@ import { Search, MapPin, LayoutDashboard, Shield } from 'lucide-react'
 import { LANGUAGES } from '../lib/constants'
 import { safeLocalStorage } from '../lib/api'
 import {
-  getActiveLang, setActiveLang, resetTranslations, getTranslation,
-  hasOriginal, getOriginal, setOriginal, restoreOriginals, getTextNodes, translateNodes,
+  getActiveLang, setActiveLang, restoreOriginals, getTextNodes, getTranslatableAttributes, translateNodes,
 } from '../lib/translate'
 
 function HeaderSearch({ onSelectPlace, wards = [], onSelectWard }) {
@@ -131,28 +130,35 @@ function HeaderSearch({ onSelectPlace, wards = [], onSelectWard }) {
   )
 }
 
-function LanguageSelector({ onLanguageChange }) {
+export function LanguageSelector({ onLanguageChange }) {
   const [open, setOpen] = useState(false)
-  const [selected, setSelected] = useState('en')
+  const [selected, setSelected] = useState(() => {
+    const savedLang = safeLocalStorage.getItem('aqify_lang')
+    return savedLang && LANGUAGES.some(lang => lang.code === savedLang) ? savedLang : 'en'
+  })
   const [translating, setTranslating] = useState(false)
   const ref = useRef(null)
   const observerRef = useRef(null)
+  const translationTimerRef = useRef(null)
 
   useEffect(() => {
     const savedLang = safeLocalStorage.getItem('aqify_lang')
     if (savedLang && LANGUAGES.some(lang => lang.code === savedLang)) {
-      setSelected(savedLang)
       setActiveLang(savedLang)
       document.documentElement.lang = savedLang
       if (savedLang !== 'en') {
         const root = document.getElementById('root')
         if (root) {
-          const nodes = getTextNodes(root)
-          translateNodes(nodes, savedLang)
+          queueMicrotask(async () => {
+            setTranslating(true)
+            await translateNodes(getTextNodes(root), savedLang, getTranslatableAttributes(root))
+            setTranslating(false)
+          })
         }
       }
+      onLanguageChange?.(savedLang)
     }
-  }, [])
+  }, [onLanguageChange])
 
   useEffect(() => {
     function handleClickOutside(e) {
@@ -166,64 +172,38 @@ function LanguageSelector({ onLanguageChange }) {
   useEffect(() => {
     const root = document.getElementById('root')
     if (!root) return
-    observerRef.current = new MutationObserver((mutations) => {
+    observerRef.current = new MutationObserver(() => {
       if (getActiveLang() === 'en') return
-
-      const changedNodes = new Set()
-
-      mutations.forEach(m => {
-        if (m.type === 'characterData') {
-          const node = m.target
-          const currentText = node.textContent.trim()
-          const existingOriginal = getOriginal(node)
-
-          if (!existingOriginal) {
-            setOriginal(node, currentText)
-            changedNodes.add(node)
-            return
-          }
-
-          const previousOriginal = existingOriginal.trim()
-          if (currentText && currentText !== previousOriginal) {
-            setOriginal(node, currentText)
-            changedNodes.add(node)
-          }
-        }
-      })
-
-      clearTimeout(observerRef.current._timer)
-      observerRef.current._timer = setTimeout(() => {
-        const nodes = getTextNodes(root)
-        const untranslated = nodes.filter(n => {
-          const orig = (getOriginal(n) || n.textContent).trim()
-          if (!orig) return false
-          const translated = getTranslation(orig)
-          if (translated && n.textContent.trim() !== translated) return true
-          return changedNodes.has(n)
-        })
-        const brandNew = nodes.filter(n => !hasOriginal(n))
-        const all = [...new Set([...untranslated, ...brandNew])]
-        if (all.length > 0) translateNodes(all, getActiveLang())
-      }, 300)
+      clearTimeout(translationTimerRef.current)
+      // Scan the current DOM after React has finished a render. Translation
+      // results are cached per language, so rescans only request genuinely new
+      // dynamic strings and do not create a request loop.
+      translationTimerRef.current = setTimeout(() => {
+        translateNodes(getTextNodes(root), getActiveLang(), getTranslatableAttributes(root))
+      }, 180)
     })
-    observerRef.current.observe(root, { childList: true, subtree: true, characterData: true })
-    return () => observerRef.current?.disconnect()
+    observerRef.current.observe(root, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['placeholder', 'title'] })
+    return () => {
+      clearTimeout(translationTimerRef.current)
+      observerRef.current?.disconnect()
+    }
   }, [])
 
   const translatePage = useCallback(async (langCode) => {
+    // Always return the DOM to its source language before collecting nodes.
+    // This keeps newly rendered nodes and existing nodes on the same baseline.
+    restoreOriginals()
     setActiveLang(langCode)
     document.documentElement.lang = langCode
     if (langCode === 'en') {
-      restoreOriginals()
       setTranslating(false)
       return
     }
     setTranslating(true)
-    resetTranslations()
     const root = document.getElementById('root')
     if (root) {
       const nodes = getTextNodes(root)
-      await translateNodes(nodes, langCode)
+      await translateNodes(nodes, langCode, getTranslatableAttributes(root))
     }
     setTranslating(false)
   }, [])
@@ -313,8 +293,7 @@ function LanguageSelector({ onLanguageChange }) {
 }
 
 export default function Header({ tab, setTab, onSelectPlace, wards, onSelectWard, onLanguageChange, user, onLogout }) {
-  const role = user?.role || 'Citizen'
-  const showEnforcement = role === 'Authority' || role === 'Admin'
+  const showEnforcement = ['Inspector', 'Authority', 'Admin'].includes(user?.role)
 
   return (
     <header className="header">

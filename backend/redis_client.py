@@ -8,7 +8,15 @@ import redis.asyncio as redis
 
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 
-client = redis.from_url(REDIS_URL, decode_responses=True)
+# Redis is an optional accelerator. Short socket timeouts keep every cache and
+# rate-limit lookup from holding an API request open when Redis is not deployed.
+client = redis.from_url(
+    REDIS_URL,
+    decode_responses=True,
+    socket_connect_timeout=0.5,
+    socket_timeout=0.75,
+    retry_on_timeout=False,
+)
 
 
 async def get_redis_client():
@@ -69,3 +77,10 @@ async def rate_limit(key: str, limit: int = 20, window_seconds: int = 60, identi
         return current_count <= limit
     except Exception:
         return True
+
+
+async def rate_limit_or_429(request, key: str, limit: int = 20, window_seconds: int = 60):
+    from fastapi import HTTPException
+    client_id = request.client.host if request.client else "unknown"
+    if not await rate_limit(f"{key}:{client_id}", limit=limit, window_seconds=window_seconds):
+        raise HTTPException(status_code=429, detail="Rate limit exceeded")

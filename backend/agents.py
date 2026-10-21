@@ -11,10 +11,30 @@ Implements the four core AI agents:
 from __future__ import annotations
 
 import math
+import os
+from collections import OrderedDict
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
-ADVISORY_CACHE: Dict[tuple, tuple[datetime, Dict[str, Any]]] = {}
+ADVISORY_CACHE: OrderedDict[tuple, tuple[datetime, Dict[str, Any]]] = OrderedDict()
+_ADVISORY_CACHE_MAX_ENTRIES = max(64, int(os.getenv("ADVISORY_CACHE_MAX_ENTRIES", "512")))
+
+
+def _get_cached_advisory(cache_key: tuple, now: datetime) -> Optional[Dict[str, Any]]:
+    cached = ADVISORY_CACHE.pop(cache_key, None)
+    if cached is None:
+        return None
+    if now - cached[0] >= timedelta(minutes=10):
+        return None
+    ADVISORY_CACHE[cache_key] = cached
+    return cached[1]
+
+
+def _store_advisory(cache_key: tuple, now: datetime, result: Dict[str, Any]) -> None:
+    ADVISORY_CACHE.pop(cache_key, None)
+    ADVISORY_CACHE[cache_key] = (now, result)
+    while len(ADVISORY_CACHE) > _ADVISORY_CACHE_MAX_ENTRIES:
+        ADVISORY_CACHE.popitem(last=False)
 
 
 # ── Utility ───────────────────────────────────────────────────────────────────
@@ -1119,9 +1139,9 @@ class AdvisoryAgent:
             round(float((weather or {}).get("wind_speed_kmh", -1)), 1) if weather else None,
         )
         now = datetime.now(timezone.utc)
-        cached = ADVISORY_CACHE.get(cache_key)
-        if cached and now - cached[0] < timedelta(minutes=10):
-            return cached[1]
+        cached = _get_cached_advisory(cache_key, now)
+        if cached is not None:
+            return cached
 
         # Attempt to use Gemini LLM for dynamic multi-lingual advisory generation if key is provided
         import os
@@ -1187,34 +1207,34 @@ IMPORTANT: Return ONLY the raw JSON object. Do not wrap it in markdown block quo
                     }]
                 }
 
-                async with httpx.AsyncClient(timeout=10.0) as client:
-                    resp = await client.post(url, json=payload, headers=headers)
-                    if resp.status_code == 200:
-                        res_data = resp.json()
-                        text_response = res_data["candidates"][0]["content"]["parts"][0]["text"].strip()
-                        if text_response.startswith("```"):
-                            text_response = text_response.split("```")[1]
-                            if text_response.startswith("json"):
-                                text_response = text_response[4:]
-                        text_response = text_response.strip()
-                        
-                        parsed = json.loads(text_response)
-                        result = {
-                            "ward_id": ward["id"],
-                            "ward_name": ward["name"],
-                            "aqi": aqi,
-                            "level": level,
-                            "language": self.LANGUAGES.get(lang, "English"),
-                            "language_code": lang,
-                            "advisory": parsed["advisory"],
-                            "reason": parsed["reason"],
-                            "precautions": parsed["precautions"],
-                            "health_tip": parsed["health_tip"],
-                            "vulnerable_info": ward.get("vulnerable", {}),
-                            "generated_at": datetime.now(timezone.utc).isoformat(),
-                        }
-                        ADVISORY_CACHE[cache_key] = (now, result)
-                        return result
+                from simulation import HTTP_CLIENT
+                resp = await HTTP_CLIENT.post(url, json=payload, headers=headers)
+                if resp.status_code == 200:
+                    res_data = resp.json()
+                    text_response = res_data["candidates"][0]["content"]["parts"][0]["text"].strip()
+                    if text_response.startswith("```"):
+                        text_response = text_response.split("```")[1]
+                        if text_response.startswith("json"):
+                            text_response = text_response[4:]
+                    text_response = text_response.strip()
+
+                    parsed = json.loads(text_response)
+                    result = {
+                        "ward_id": ward["id"],
+                        "ward_name": ward["name"],
+                        "aqi": aqi,
+                        "level": level,
+                        "language": self.LANGUAGES.get(lang, "English"),
+                        "language_code": lang,
+                        "advisory": parsed["advisory"],
+                        "reason": parsed["reason"],
+                        "precautions": parsed["precautions"],
+                        "health_tip": parsed["health_tip"],
+                        "vulnerable_info": ward.get("vulnerable", {}),
+                        "generated_at": datetime.now(timezone.utc).isoformat(),
+                    }
+                    _store_advisory(cache_key, now, result)
+                    return result
             except Exception as e:
                 print(f"Gemini API Error, falling back to static advisory: {e}")
 
@@ -1306,7 +1326,7 @@ IMPORTANT: Return ONLY the raw JSON object. Do not wrap it in markdown block quo
             "vulnerable_info": ward.get("vulnerable", {}),
             "generated_at": datetime.now(timezone.utc).isoformat(),
         }
-        ADVISORY_CACHE[cache_key] = (now, result)
+        _store_advisory(cache_key, now, result)
         return result
 
     @staticmethod

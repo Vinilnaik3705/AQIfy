@@ -4,8 +4,12 @@ import numpy as np
 import httpx
 import logging
 import asyncio
-from concurrent.futures import ProcessPoolExecutor
-from datetime import datetime, timedelta
+import joblib
+import tempfile
+from collections import OrderedDict
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Dict, List, Any, Tuple, Optional
 from sklearn.ensemble import GradientBoostingRegressor
 from scipy.interpolate import PchipInterpolator
@@ -67,35 +71,46 @@ QUANTILE_HI = 0.90
 # a brand-new TCP+TLS connection per request — a real speed cost when training many
 # cities back-to-back. Separate connect/read timeouts fail fast on a dead connection
 # without waiting the full read budget.
-_limits = httpx.Limits(max_connections=300, max_keepalive_connections=100)
+_limits = httpx.Limits(max_connections=8, max_keepalive_connections=4)
 _HTTP_TIMEOUT = httpx.Timeout(connect=5.0, read=12.0, write=8.0, pool=30.0)
 _HTTP_CLIENT = httpx.AsyncClient(timeout=_HTTP_TIMEOUT, limits=_limits)
 
-# ── Process pool for CPU-bound GBM fitting ─────────────────────────────────
-# sklearn's GradientBoostingRegressor.fit() spends most of its time in its own
-# Python-level boosting loop, which holds the GIL far more than vectorized
-# numpy code does. Running several fits concurrently via asyncio.to_thread
-# put them on OS threads *inside this same process*, so they all fought over
-# that one GIL — meaning a page load or fallback API call from a real visitor
-# could get stuck behind whatever city was mid-boosting-iteration, even
-# though nothing was technically "awaiting" on it. That contention, not any
-# actual await-blocking, is why the UI could feel frozen while cities trained
-# in the background. A ProcessPoolExecutor gives each fit its own interpreter
-# and its own GIL, so CPU-bound training runs in genuine parallel across CPU
-# cores and can never block this process's asyncio event loop.
-_TRAIN_PROCESS_POOL = ProcessPoolExecutor(
-    max_workers=max(1, min(4, os.cpu_count() or 4))
-)
+
+def get_http_client() -> httpx.AsyncClient:
+    return _HTTP_CLIENT
+
+
+async def close_http_client() -> None:
+    """Close the shared HTTP client during application shutdown."""
+    await _HTTP_CLIENT.aclose()
+
+
+def close_training_executor() -> None:
+    """Release the single bounded training worker during application shutdown."""
+    _TRAIN_EXECUTOR.shutdown(wait=False, cancel_futures=True)
+
+
+def _parse_utc_datetime(value: str) -> datetime:
+    """Parse an API timestamp and make its timezone explicit as UTC."""
+    parsed = datetime.fromisoformat(value)
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+# Training is deliberately serialized in a dedicated thread. A process pool
+# gives every worker a second copy of numpy/scikit-learn and is particularly
+# expensive on a small Render web service (and multiplies again if uvicorn is
+# configured with more than one worker). The dedicated thread keeps the event
+# loop responsive without duplicating the whole Python process.
+_TRAIN_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="aqi-training")
 
 
 def _walk_forward_split(n_samples: int, n_folds: int = 3
                         ) -> List[Tuple[np.ndarray, np.ndarray]]:
     """Generate walk-forward (expanding window) train/val index splits.
 
-    Module-level (not a method) so it has no dependency on a class instance —
-    that's what lets `_fit_all_horizons_worker` below run inside a separate
-    process via ProcessPoolExecutor, since only plain functions/data (not
-    bound methods holding an asyncio.Lock) can be pickled across that boundary.
+    Module-level (not a method) so the CPU-bound fit can run in the dedicated
+    executor without capturing the forecaster instance or its asyncio lock.
     """
     fold_size = n_samples // (n_folds + 1)
     if fold_size < 24:
@@ -119,16 +134,10 @@ def _fit_all_horizons_worker(horizon_datasets: Dict[int, Tuple[np.ndarray, np.nd
                              ) -> Tuple[Dict[int, Any], Dict[int, Any], Dict[int, Any], Dict[str, Any]]:
     """Synchronous, CPU-bound: walk-forward CV + final fit for every horizon.
 
-    Runs inside a worker PROCESS (ProcessPoolExecutor), not just a worker
-    thread — see the `_TRAIN_PROCESS_POOL` comment above for why. Being a
-    plain module-level function (no `self`, no logger handles shared with the
-    parent process) is what makes it safe to pickle and ship to that process.
+    Runs in the dedicated training thread. Being a plain module-level
+    function keeps the work independent from the forecaster's asyncio state.
     Returns empty dicts if nothing could be trained.
     """
-    # Each process needs its own logger handler — module-level `logger` was
-    # created in the parent process; a fresh child process re-imports this
-    # module and gets its own copy, so this just works via the normal
-    # module-level `logger` defined above.
     models: Dict[int, GradientBoostingRegressor] = {}
     q_lo_models: Dict[int, GradientBoostingRegressor] = {}
     q_hi_models: Dict[int, GradientBoostingRegressor] = {}
@@ -212,13 +221,93 @@ class AQIForecaster:
         # Cache: { city_key: { "models": {h: model}, "q_lo": {h: model},
         #          "q_hi": {h: model}, "last_trained": datetime, "metrics": {...},
         #          "last_historical_data": data, "city_baseline_aqi": float } }
-        self._models_cache: Dict[str, Dict[str, Any]] = {}
+        self._models_cache: OrderedDict[str, Dict[str, Any]] = OrderedDict()
+        self._max_model_cities = max(1, int(os.getenv("MODEL_CACHE_MAX_CITIES", "4")))
         self._cache_lock = asyncio.Lock()
         self._retrain_interval = timedelta(hours=RETRAIN_HOURS)
+        self._model_cache_dir = Path(
+            os.getenv("AQI_MODEL_CACHE_DIR", os.path.join(os.path.dirname(__file__), "model_cache"))
+        )
+        self._load_persisted_models()
         # Cities with a train_for_city() call currently in flight. Prevents the
         # same city being trained twice at once — see the comment in
         # train_for_city() for why that was happening and why it mattered.
         self._training_in_flight: set = set()
+        self._training_tasks: Dict[str, asyncio.Task] = {}
+
+    def _model_path(self, city_key: str) -> Path:
+        safe_city_key = city_key.replace("/", "_").replace("\\", "_")
+        return self._model_cache_dir / f"{safe_city_key}.joblib"
+
+    def _load_persisted_models(self) -> None:
+        """Load valid city model bundles without making startup depend on them."""
+        if not self._model_cache_dir.exists():
+            return
+        model_paths = sorted(
+            self._model_cache_dir.glob("*.joblib"),
+            key=lambda path: path.stat().st_mtime,
+            reverse=True,
+        )[:self._max_model_cities]
+        for model_path in model_paths:
+            try:
+                bundle = joblib.load(model_path)
+                required_keys = {"models", "q_lo", "q_hi", "last_trained", "metrics",
+                                 "last_historical_data", "aqi_series", "city_baseline_aqi"}
+                if not required_keys.issubset(bundle):
+                    raise ValueError("model bundle is missing required fields")
+                last_trained = bundle["last_trained"]
+                if last_trained.tzinfo is None:
+                    bundle["last_trained"] = last_trained.replace(tzinfo=timezone.utc)
+                else:
+                    bundle["last_trained"] = last_trained.astimezone(timezone.utc)
+                city_key = model_path.stem
+                self._models_cache[city_key] = bundle
+            except Exception as exc:
+                logger.warning(f"Ignoring invalid persisted model {model_path.name}: {type(exc).__name__}: {exc}")
+
+    async def _persist_model(self, city_key: str, bundle: Dict[str, Any]) -> None:
+        """Persist a trained model bundle atomically without blocking the event loop."""
+        def write_bundle() -> None:
+            self._model_cache_dir.mkdir(parents=True, exist_ok=True)
+            target = self._model_path(city_key)
+            with tempfile.NamedTemporaryFile(
+                mode="wb", dir=self._model_cache_dir, prefix=f".{target.name}.", delete=False
+            ) as temporary_file:
+                temporary_path = Path(temporary_file.name)
+            try:
+                joblib.dump(bundle, temporary_path)
+                os.replace(temporary_path, target)
+            finally:
+                temporary_path.unlink(missing_ok=True)
+
+        try:
+            await asyncio.to_thread(write_bundle)
+        except Exception as exc:
+            logger.warning(f"Could not persist model for {city_key}: {type(exc).__name__}: {exc}")
+
+    def schedule_training(self, city_key: str, force: bool = True) -> asyncio.Task:
+        """Schedule at most one request-triggered training task per city."""
+        existing = self._training_tasks.get(city_key)
+        if existing is not None and not existing.done():
+            return existing
+
+        task = asyncio.create_task(self.train_for_city(city_key, force=force))
+        self._training_tasks[city_key] = task
+
+        def _forget(completed: asyncio.Task) -> None:
+            if self._training_tasks.get(city_key) is completed:
+                self._training_tasks.pop(city_key, None)
+
+        task.add_done_callback(_forget)
+        return task
+
+    async def cancel_training_tasks(self) -> None:
+        tasks = [task for task in self._training_tasks.values() if not task.done()]
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        self._training_tasks.clear()
 
     def get_training_status(self, city_keys: List[str]) -> Dict[str, Any]:
         """Cheap, lock-free snapshot of which of `city_keys` have a trained
@@ -314,7 +403,7 @@ class AQIForecaster:
                                          "ozone": [], "carbon_monoxide": []}
             for item in items:
                 c = item.get("components", {})
-                out["time"].append(datetime.utcfromtimestamp(item["dt"]).strftime("%Y-%m-%dT%H:%M"))
+                out["time"].append(datetime.fromtimestamp(item["dt"], timezone.utc).isoformat())
                 out["pm2_5"].append(c.get("pm2_5"))
                 out["pm10"].append(c.get("pm10"))
                 out["nitrogen_dioxide"].append(c.get("no2"))
@@ -340,7 +429,7 @@ class AQIForecaster:
         Open-Meteo's AQ call fails (rare — it hasn't failed in practice, but
         it's a free, independent safety net).
         """
-        end_date = datetime.now() - timedelta(days=1)
+        end_date = datetime.now(timezone.utc) - timedelta(days=1)
         start_date = end_date - timedelta(days=days)
         start_str = start_date.strftime("%Y-%m-%d")
         end_str = end_date.strftime("%Y-%m-%d")
@@ -551,7 +640,7 @@ class AQIForecaster:
             out = {"time": [], "pm2_5": [], "pm10": [], "no2": [], "so2": [], "o3": [], "co": []}
             for item in items:
                 c = item.get("components", {})
-                out["time"].append(datetime.utcfromtimestamp(item["dt"]).strftime("%Y-%m-%dT%H:%M"))
+                out["time"].append(datetime.fromtimestamp(item["dt"], timezone.utc).isoformat())
                 out["pm2_5"].append(c.get("pm2_5"))
                 out["pm10"].append(c.get("pm10"))
                 out["no2"].append(c.get("no2"))
@@ -636,7 +725,7 @@ class AQIForecaster:
 
         # We need 24 hours of lookback for lags, and h hours of look-ahead
         for i in range(24, n):
-            dt = datetime.fromisoformat(times[i])
+            dt = _parse_utc_datetime(times[i])
 
             # ── Anchor / persistence features ──
             aqi_now = aqi_series[i]
@@ -690,7 +779,7 @@ class AQIForecaster:
                 precip_washout = 1.0 if any((p or 0.0) > 0.5 for p in precip_window) else 0.0
 
                 # ── Temporal / calendar (rich) ──
-                dt_h = datetime.fromisoformat(times[target_idx])
+                dt_h = _parse_utc_datetime(times[target_idx])
                 target_hour = dt_h.hour
                 hour_sin = np.sin(2 * np.pi * target_hour / 24)
                 hour_cos = np.cos(2 * np.pi * target_hour / 24)
@@ -784,7 +873,7 @@ class AQIForecaster:
             return
         self._training_in_flight.add(city_key)
         try:
-            now = datetime.now()
+            now = datetime.now(timezone.utc)
             async with self._cache_lock:
                 cached = self._models_cache.get(city_key)
                 if cached and not force:
@@ -816,13 +905,13 @@ class AQIForecaster:
             # several cities training at once, that contention was enough to make
             # unrelated requests (a visitor just loading the page) feel stuck,
             # even though nothing was technically "awaiting" on the training.
-            # run_in_executor against a ProcessPoolExecutor instead runs the fit
-            # in its own interpreter with its own GIL, so it can never starve
-            # this process's event loop no matter how much math it's doing.
+            # Run the synchronous fit away from the event loop. The executor
+            # has one worker so concurrent requests cannot multiply its peak
+            # training memory.
             try:
                 loop = asyncio.get_running_loop()
                 models, q_lo_models, q_hi_models, metrics = await loop.run_in_executor(
-                    _TRAIN_PROCESS_POOL, _fit_all_horizons_worker, horizon_datasets, city_key
+                    _TRAIN_EXECUTOR, _fit_all_horizons_worker, horizon_datasets, city_key
                 )
             except Exception as e:
                 logger.error(f"Training failed for {city_key}: {type(e).__name__}: {e or 'no details'}")
@@ -833,7 +922,7 @@ class AQIForecaster:
                 return
 
             async with self._cache_lock:
-                self._models_cache[city_key] = {
+                model_bundle = {
                     "models": models,
                     "q_lo": q_lo_models,
                     "q_hi": q_hi_models,
@@ -843,6 +932,13 @@ class AQIForecaster:
                     "aqi_series": aqi_series,
                     "city_baseline_aqi": city_baseline_aqi,
                 }
+                self._models_cache[city_key] = model_bundle
+                self._models_cache.move_to_end(city_key)
+                # Keep model inference memory bounded. Persisted files remain
+                # available and an evicted city can be retrained on demand.
+                while len(self._models_cache) > self._max_model_cities:
+                    self._models_cache.popitem(last=False)
+            await self._persist_model(city_key, model_bundle)
             logger.info(f"Trained {len(models)} horizon models for {city_key}. "
                         f"MAE={metrics['ml_mae']:.1f} vs Persistence={metrics['persistence_mae']:.1f}, "
                         f"DirAcc={metrics['directional_accuracy']:.1%}, Skill={metrics['skill_score']:.3f}")
@@ -946,7 +1042,7 @@ class AQIForecaster:
                 precip_washout = 1.0
 
         # Temporal at t+h
-        future_dt = datetime.now() + timedelta(hours=h)
+        future_dt = datetime.now(timezone.utc) + timedelta(hours=h)
         target_hour = future_dt.hour
         hour_sin = np.sin(2 * np.pi * target_hour / 24)
         hour_cos = np.cos(2 * np.pi * target_hour / 24)
@@ -1005,10 +1101,12 @@ class AQIForecaster:
 
         # Trigger background training if model is missing or stale (older than retrain interval)
         model_info = self._models_cache.get(city_key)
-        now = datetime.now()
+        if model_info is not None:
+            self._models_cache.move_to_end(city_key)
+        now = datetime.now(timezone.utc)
         if not model_info or (now - model_info["last_trained"] > self._retrain_interval):
             # Non-blocking training
-            asyncio.create_task(self.train_for_city(city_key, force=True))
+            self.schedule_training(city_key, force=True)
 
         # If we have no model yet, immediately return the real meteorological forecast as fallback
         if not model_info:
@@ -1135,7 +1233,7 @@ class AQIForecaster:
 
         for h_offset in range(limit):
             h_idx = h_offset + 1  # hour_offset is 1-based in the output
-            dt = datetime.fromisoformat(fw_times[h_offset])
+            dt = _parse_utc_datetime(fw_times[h_offset])
 
             model_predicted_aqi = float(spline_aqi[h_idx]) if h_idx < len(spline_aqi) else float(spline_aqi[-1])
             conf_lo = float(spline_lo[h_idx]) if h_idx < len(spline_lo) else float(spline_lo[-1])
@@ -1252,7 +1350,7 @@ class AQIForecaster:
         base_aqi = calculate_indian_aqi(base_cal["pm25"], base_cal["pm10"], 0.0, 0.0, 0.0, 0.0)
 
         for h in range(limit):
-            dt = datetime.fromisoformat(forecast_weather["time"][h])
+            dt = _parse_utc_datetime(forecast_weather["time"][h])
             om_cal = calibrate_india_pollutants(
                 forecast_raw_aqi["pm2_5"][h] if h < len(forecast_raw_aqi["pm2_5"]) else 15.0,
                 forecast_raw_aqi["pm10"][h] if h < len(forecast_raw_aqi["pm10"]) else 30.0,
@@ -1311,7 +1409,7 @@ class AQIForecaster:
     def _generate_fallback(self, city_key: str, hours: int = 72) -> Dict[str, Any]:
         """Simple fallback forecast when APIs or training fails."""
         grid = []
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
         base_aqi = 120.0
 
         for h in range(hours):
@@ -1363,7 +1461,7 @@ class AQIForecaster:
                 cause = "Unusually strong wind clearing pollutants or sudden rainfall"
 
             return {
-                "detected_at": datetime.now().isoformat(),
+                "detected_at": datetime.now(timezone.utc).isoformat(),
                 "predicted": round(predicted_aqi, 1),
                 "actual": round(actual_aqi, 1),
                 "deviation": round(deviation, 1),

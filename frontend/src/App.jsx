@@ -10,6 +10,7 @@ import CommandCenter from './views/CommandCenter'
 import CitizensAdvisoryPopup from './components/widgets/CitizensAdvisoryPopup'
 import PersonalAlertSubscriptionPopup from './components/widgets/PersonalAlertSubscriptionPopup'
 import EvidenceModal from './components/widgets/EvidenceModal'
+import LandingPage from './components/LandingPage'
 
 const EnforcementView = lazy(() => import('./views/EnforcementView'))
 
@@ -105,17 +106,19 @@ function InspectorAssignmentsPanel({ work, selectedWard }) {
 
 export default function App() {
   const [auth, setAuth] = useState(() => {
-    const token = safeLocalStorage.getItem('aqify_auth_token')
     const user = safeLocalStorage.getItem('aqify_user')
-    if (!token || !user) return null
+    if (!user) return null
     try {
-      return { token, user: JSON.parse(user) }
+      return { token: null, user: JSON.parse(user) }
     } catch {
       return null
     }
   })
   const [tab, setTab] = useState('command')
+  const [authMode, setAuthMode] = useState(null)
   const [state, setState] = useState(null)
+  const stateTimestamp = state?.timestamp
+  const [stateError, setStateError] = useState(false)
   const [loading, setLoading] = useState(true)
   const [progress, setProgress] = useState(0)
   const [selectedWard, setSelectedWard] = useState(null)
@@ -143,19 +146,42 @@ export default function App() {
   // Refs for closing popups on clicking outside
   const advisoryRef = useRef(null)
   const subscriptionRef = useRef(null)
+  const selectionRequestRef = useRef(0)
+  const selectionAbortRef = useRef(null)
 
   const roleName = auth?.user?.role || 'Citizen'
-  const canViewEnforcement = roleName === 'Authority' || roleName === 'Admin'
+  const canViewEnforcement = ['Inspector', 'Authority', 'Admin'].includes(roleName)
 
   const handleAuthenticate = useCallback((nextAuth) => {
     setAuth(nextAuth)
   }, [])
 
   const handleLogout = useCallback(() => {
+    void fetchJSON('/api/auth/logout', { method: 'POST' })
     safeLocalStorage.removeItem?.('aqify_auth_token')
     safeLocalStorage.removeItem?.('aqify_user')
     setAuth(null)
   }, [])
+
+  // The session is stored in an HttpOnly cookie. Revalidate the non-sensitive
+  // profile cached for the shell so an expired cookie cannot open the dashboard.
+  const authUserId = auth?.user?.id
+  useEffect(() => {
+    if (!authUserId) return
+    let cancelled = false
+    fetchJSON('/api/auth/me').then((profile) => {
+      if (cancelled) return
+      if (profile) {
+        safeLocalStorage.setItem('aqify_user', JSON.stringify(profile))
+        setAuth(current => current ? ({ ...current, token: null, user: profile }) : current)
+      } else {
+        safeLocalStorage.removeItem('aqify_user')
+        safeLocalStorage.removeItem('aqify_auth_token')
+        setAuth(null)
+      }
+    })
+    return () => { cancelled = true }
+  }, [authUserId])
 
   const handleToggleAdvisory = useCallback(() => {
     setIsAdvisoryOpen(prev => {
@@ -191,8 +217,21 @@ export default function App() {
   // Background refresh of live state (does not touch selection)
   const refreshState = useCallback(async () => {
     const data = await fetchJSON('/api/state?city=all')
-    if (data) setState(data)
+    if (data) {
+      setState(data)
+      setStateError(false)
+    }
   }, [])
+
+  const beginSelectionRequest = useCallback(() => {
+    selectionAbortRef.current?.abort()
+    const controller = new AbortController()
+    selectionAbortRef.current = controller
+    const requestId = ++selectionRequestRef.current
+    return { controller, requestId }
+  }, [])
+
+  useEffect(() => () => selectionAbortRef.current?.abort(), [])
 
   // Simulated progress bar effect
   useEffect(() => {
@@ -228,23 +267,31 @@ export default function App() {
   }, [state, loading])
 
   useEffect(() => {
-    if (!state) return
+    if (!stateTimestamp) return
     let cancelled = false
-    fetchJSON(`/api/forecast?city=all&hours=${FORECAST_HOURS}`).then((data) => {
+    fetchJSON(`/api/forecast?city=all&hours=${FORECAST_HOURS}`, { timeoutMs: 30000 }).then((data) => {
       if (data && !cancelled) setForecast(data)
     })
     return () => { cancelled = true }
-  }, [state])
+  }, [stateTimestamp])
 
   useEffect(() => {
     let cancelled = false
     fetchJSON('/api/state?city=all').then((data) => {
-      if (!data || cancelled) return
+      if (cancelled) return
+      if (!data) {
+        setStateError(true)
+        setLoading(false)
+        return
+      }
       setState(data)
+      setStateError(false)
       if (data.wards?.length) {
         setSelectedWard(data.wards[0])
         setTargetCenter(data.wards[0].center)
-        setTargetZoom(5)
+        // Start focused on the first monitored ward instead of zooming out to
+        // the whole country; users can still zoom out with the map controls.
+        setTargetZoom(10)
       }
     })
     return () => { cancelled = true }
@@ -281,7 +328,8 @@ export default function App() {
       })
       return () => { cancelled = true }
     }
-    setAssignedWork([])
+    const clearAssignedWork = setTimeout(() => setAssignedWork([]), 0)
+    return () => clearTimeout(clearAssignedWork)
   }, [auth?.user, roleName])
 
   useEffect(() => {
@@ -308,8 +356,9 @@ export default function App() {
   }, [isAdvisoryOpen, selectedWard, advLang, advProfile])
 
   const handleSelectPlace = async (place) => {
-    const data = await fetchJSON(`/api/aqi-details?lat=${place.lat}&lng=${place.lng}&name=${encodeURIComponent(place.name)}&country=${encodeURIComponent(place.country)}&state=${encodeURIComponent(place.state)}`)
-    if (data) {
+    const { controller, requestId } = beginSelectionRequest()
+    const data = await fetchJSON(`/api/aqi-details?lat=${place.lat}&lng=${place.lng}&name=${encodeURIComponent(place.name)}&country=${encodeURIComponent(place.country)}&state=${encodeURIComponent(place.state)}`, { signal: controller.signal })
+    if (data && requestId === selectionRequestRef.current && !controller.signal.aborted) {
       setCustomPlaces(prev => {
         if (!prev.some(p => p.id === data.id)) {
           return [...prev, data]
@@ -323,6 +372,7 @@ export default function App() {
   }
 
   const handleSelectWard = useCallback(async (ward) => {
+    const { controller, requestId } = beginSelectionRequest()
     if (!ward) {
       setSelectedWard(null)
       return
@@ -338,8 +388,8 @@ export default function App() {
       setTargetZoom(10)
     }
 
-    const data = await fetchJSON(`/api/aqi-details?lat=${ward.center[0]}&lng=${ward.center[1]}&name=${encodeURIComponent(ward.name)}&country=${encodeURIComponent(ward.country || '')}&state=${encodeURIComponent(ward.state || '')}`)
-    if (data) {
+    const data = await fetchJSON(`/api/aqi-details?lat=${ward.center[0]}&lng=${ward.center[1]}&name=${encodeURIComponent(ward.name)}&country=${encodeURIComponent(ward.country || '')}&state=${encodeURIComponent(ward.state || '')}`, { signal: controller.signal })
+    if (data && requestId === selectionRequestRef.current && !controller.signal.aborted) {
       // Preserve the original ward id (e.g. "hyderabad_lb_nagar") so forecast
       // lookups can still match ward_id in the forecast wards array.
       setSelectedWard({
@@ -348,12 +398,20 @@ export default function App() {
         ward_key: ward.id,
       })
     }
-  }, [])
+  }, [beginSelectionRequest])
 
   // ── Render ───────────────────────────────────────────────────────────
 
   if (!auth) {
-    return <AuthPage onAuth={handleAuthenticate} />
+    return authMode ? (
+      <AuthPage
+        initialMode={authMode}
+        onAuth={handleAuthenticate}
+        onBack={() => setAuthMode(null)}
+      />
+    ) : (
+      <LandingPage onLogin={() => setAuthMode('login')} onRegister={() => setAuthMode('register')} />
+    )
   }
 
   if (loading) {
@@ -407,6 +465,7 @@ export default function App() {
               targetCenter={targetCenter}
               targetZoom={targetZoom}
               onSelectPlace={handleSelectPlace}
+              dataError={stateError}
             />
           </>
         )}
@@ -427,8 +486,8 @@ export default function App() {
           </Suspense>
         )}
         {tab === 'enforcement' && !canViewEnforcement && (
-          <div style={{ padding: '32px 20px', textAlign: 'center', color: '#cbd5e1' }}>
-            EnforceHub is available only to authority-level users.
+             <div style={{ padding: '32px 20px', textAlign: 'center', color: '#cbd5e1' }}>
+             EnforceHub is available only to inspectors, authorities, and administrators.
           </div>
         )}
       </main>

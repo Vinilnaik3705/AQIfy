@@ -1,19 +1,39 @@
 import os
+import secrets
+import warnings
 from datetime import datetime, timedelta, timezone
 from typing import Annotated, Iterable
 
 import bcrypt
 import jwt
-from fastapi import Depends, HTTPException, status
+from fastapi import Cookie, Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from passlib.context import CryptContext
 from sqlalchemy.orm import Session
 
-from database import User, UserRole, get_db_session
+from database import User, get_db_session
 
-JWT_SECRET = os.getenv("JWT_SECRET") or os.getenv("SECRET_KEY") or "aqify-dev-secret-change-me"
+APP_ENV = os.getenv("APP_ENV", "development").strip().lower()
+JWT_SECRET = os.getenv("JWT_SECRET", "").strip()
+if len(JWT_SECRET) < 32:
+    if APP_ENV in {"development", "dev", "test"}:
+        # Keep a fresh local checkout runnable without making development users
+        # copy secrets into chat or commit them. Production still hard-fails.
+        JWT_SECRET = f"aqify-dev-{secrets.token_urlsafe(48)}"
+        warnings.warn(
+            "JWT_SECRET is not configured; using an ephemeral development secret. "
+            "Set JWT_SECRET before deploying to production.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+    else:
+        raise RuntimeError(
+            "JWT_SECRET must be configured with a random secret of at least 32 characters before starting the backend"
+        )
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRE_MINUTES = int(os.getenv("JWT_EXPIRE_MINUTES", "120"))
+if JWT_EXPIRE_MINUTES <= 0:
+    raise RuntimeError("JWT_EXPIRE_MINUTES must be positive")
 
 # Accept both current and previously stored hashes from earlier app runs.
 pwd_context = CryptContext(schemes=["pbkdf2_sha256", "bcrypt"], deprecated="auto")
@@ -36,11 +56,10 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
         return False
 
 
-def create_access_token(user_id: int, email: str, role_name: str) -> str:
+def create_access_token(user_id: int, role_name: str) -> str:
     now = datetime.now(timezone.utc)
     payload = {
         "sub": str(user_id),
-        "email": email,
         "role": role_name,
         "iat": int(now.timestamp()),
         "exp": int((now + timedelta(minutes=JWT_EXPIRE_MINUTES)).timestamp()),
@@ -59,11 +78,17 @@ def get_user_from_db(db: Session, user_id: int) -> User | None:
 async def get_current_user(
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(security)],
     db: Annotated[Session, Depends(get_db_session)],
+    session_cookie: Annotated[str | None, Cookie(alias="aqify_session")] = None,
 ) -> User:
-    if credentials is None or not credentials.scheme or credentials.scheme.lower() != "bearer":
+    # Prefer the HttpOnly cookie. The bearer fallback keeps older clients
+    # compatible without allowing a stale localStorage token to override a
+    # valid current session cookie.
+    token = session_cookie
+    if not token and credentials is not None and credentials.scheme and credentials.scheme.lower() == "bearer":
+        token = credentials.credentials
+    if not token:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing or invalid bearer token")
 
-    token = credentials.credentials
     try:
         payload = decode_token(token)
     except Exception as exc:
