@@ -74,8 +74,6 @@ export default function CommandCenter({ state, selectedWard, forecast, onSelectW
     : 0);
   const selectedCityName = selectedWard?.name ?? state.city?.name ?? 'the selected area';
   const forecastWardId = selectedWard?.ward_key ?? selectedWard?.id ?? state.city_key ?? state.city?.key ?? state.city?.name;
-  const selectedWardAqi = selectedWard?.aqi_in ?? selectedWard?.current_aqi ?? selectedWard?.aqi;
-
   const hourlyForecastData = Array.isArray(forecast) && forecast.length > 0
     ? forecast.slice(0, 72).map((entry, idx) => {
         let wardForecast = entry?.wards?.find(w => w.ward_id === forecastWardId);
@@ -189,14 +187,7 @@ export default function CommandCenter({ state, selectedWard, forecast, onSelectW
               {showStations && sensors.filter(s => Array.isArray(s.location) && s.location.length >= 2 && s.location.every(Number.isFinite)).map(s => {
                 const ward = wards.find(w => w.id === s.ward_id)
                 const placeLabel = ward ? ward.name : s.sensor_id
-                // The detailed ward request is the canonical value for the
-                // selected marker. The initial state snapshot can be older or
-                // come from a different provider, which previously made the
-                // marker disagree with the gauge on the right.
-                const isSelectedWard = selectedWard?.id && s.ward_id === selectedWard.id
-                const aqiVal = isSelectedWard && Number.isFinite(Number(selectedWardAqi))
-                  ? Number(selectedWardAqi)
-                  : (s.aqi_in ?? s.aqi)
+                const aqiVal = s.aqi_in ?? s.aqi
                 const isWard = s.ward_id && s.ward_id.includes('_') && (
                   s.ward_id.startsWith('delhi_') || s.ward_id.startsWith('mumbai_') ||
                   s.ward_id.startsWith('bengaluru_') || s.ward_id.startsWith('chennai_') ||

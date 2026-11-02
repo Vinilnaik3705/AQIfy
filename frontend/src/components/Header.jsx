@@ -293,7 +293,7 @@ export function LanguageSelector({ onLanguageChange }) {
 }
 
 export default function Header({ tab, setTab, onSelectPlace, wards, onSelectWard, onLanguageChange, user, onLogout }) {
-  const showEnforcement = ['Inspector', 'Authority', 'Admin'].includes(user?.role)
+  const showEnforcement = user?.role === 'Inspector'
 
   return (
     <header className="header">

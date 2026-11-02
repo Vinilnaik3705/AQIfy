@@ -4,17 +4,15 @@ import { safeLocalStorage } from '../lib/api'
 const API = (import.meta.env.VITE_API_BASE_URL || window.location.origin).replace(/\/$/, '')
 const AUTH_TIMEOUT_MS = 15000
 const RESERVED_SYSTEM_EMAILS = new Set([
-  'admin@aqify.local',
-  'authority@aqify.local',
   'inspector@aqify.local',
 ])
-const RESERVED_ACCOUNT_MESSAGE = 'This email is reserved for an AQIfy system account, so public registration is disabled. Use Login with the account provisioned by your administrator.'
+const RESERVED_ACCOUNT_MESSAGE = 'This email is reserved for the AQIfy inspector account, so public registration is disabled.'
 
 const initialForm = {
   full_name: '',
   email: '',
   password: '',
-  role: 'Citizen',
+  role: 'User',
 }
 
 export default function AuthPage({ onAuth, initialMode = 'login', onBack }) {
@@ -80,6 +78,7 @@ export default function AuthPage({ onAuth, initialMode = 'login', onBack }) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
+        credentials: 'include',
         signal: controller.signal,
       })
 
@@ -268,7 +267,7 @@ export default function AuthPage({ onAuth, initialMode = 'login', onBack }) {
 
           {!isLogin && (
             <div style={{ marginBottom: 18, color: '#94a3b8', fontSize: 12, lineHeight: 1.5 }}>
-              New accounts start with Citizen access. Elevated roles are assigned securely by an administrator.
+              New accounts start with User access. Inspector access is provisioned securely.
             </div>
           )}
 

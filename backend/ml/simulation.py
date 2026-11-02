@@ -2149,7 +2149,7 @@ class SimulationEngine:
         # in-process cache bounded even if callers send many distinct keys.
         self._cache_max_entries = max(32, int(os.getenv("SIMULATION_CACHE_MAX_ENTRIES", "256")))
 
-        self._cache_ttl = 900  # 15-minute cache for readings (APIs update hourly)
+        self._cache_ttl = 300  # 5-minute cache for readings
 
         self._forecast_cache_ttl = 1800  # 30-minute cache for forecasts
 
@@ -2416,7 +2416,7 @@ class SimulationEngine:
                 # Highest priority: Live OpenWeatherMap per-coordinate ground/air reading
                 if k in owm_readings_map:
                     aq_data = owm_readings_map[k]
-                elif parent_key in owm_readings_map and "_" in k:
+                elif parent_key in owm_readings_map and "_" in k and k not in openmeteo_batch_data:
                     # Ward modulated from parent OWM live baseline with local spatial variance
                     p_owm = owm_readings_map[parent_key]
                     cams_curr = openmeteo_batch_data.get(k, {})
@@ -2686,10 +2686,6 @@ class SimulationEngine:
             batch_size = 33
 
             batches = [live_keys[i:i + batch_size] for i in range(0, len(live_keys), batch_size)]
-
-            
-
-            import asyncio
 
             
 

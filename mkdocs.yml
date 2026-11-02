@@ -1,0 +1,33 @@
+site_name: AQIfy Docs
+theme:
+  name: material
+
+extra_css:
+  - stylesheets/extra.css
+
+extra_javascript:
+  - https://cdn.jsdelivr.net/npm/mermaid@11.17.2/dist/mermaid.min.js
+  - javascripts/mermaid-init.js?v=4
+
+markdown_extensions:
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: aqi-mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+
+nav:
+  - Overview: 00-overview.md
+  - Architecture: 01-architecture.md
+  - Data Sources: 02-data-sources.md
+  - Forecasting: 03-forecasting.md
+  - Agents: 04-agents.md
+  - Caching & Performance: 05-caching-and-performance.md
+  - Auth & Roles: 06-auth-and-roles.md
+  - Interventions: 07-interventions-workflow.md
+  - Alerts & Advisory: 08-alerts-and-advisory.md
+  - Database: 09-database.md
+  - Deployment: 10-deployment.md
+  - Interview Q&A: 11-interview-qa.md
+  - Limitations: 12-known-limitations.md
+  - Amazon Leadership Principles: 13-amazon-leadership-principles.md

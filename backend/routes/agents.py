@@ -2,12 +2,12 @@ import asyncio
 import os
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, Query, Request
-from auth import require_roles
+from core.auth import require_roles
 from database import User, UserRole
 
-from forecaster import get_http_client
+from ml.forecaster import get_http_client
 from routes.cities import _city_wards
-from simulation import (
+from ml.simulation import (
     CITIES,
     DEFAULT_CITY,
     get_nearest_live_city,
@@ -17,7 +17,7 @@ from simulation import (
     _fetch_live_weather,
     calculate_indian_aqi,
 )
-from singletons import (
+from core.singletons import (
     attribution_agent,
     predictive_agent,
     enforcement_agent,
@@ -50,20 +50,23 @@ async def run_attribution(
 @router.post("/api/agents/dispatch")
 async def run_dispatch(
     city: str = Query(default=DEFAULT_CITY),
-    current_user: User = Depends(require_roles(UserRole.INSPECTOR.value, UserRole.AUTHORITY.value, UserRole.ADMIN.value)),
+    current_user: User = Depends(require_roles(UserRole.INSPECTOR.value)),
 ):
     """Run the Enforcement Intelligence Agent."""
     if city == "all":
-        keys = [c["key"] for c in sim.get_available_cities()]
-        readings_list = await asyncio.gather(*(sim.generate_readings(k) for k in keys))
-
+        readings = await sim.generate_readings("all")
         combined_dispatches = []
-        for k, readings in zip(keys, readings_list):
-            sources = _city_sources(k)
-            wards = _city_wards(k)
-            res = enforcement_agent.run(readings, sources, wards)
+        for reading in readings:
+            ward_key = reading["ward_id"]
+            parent_key = ward_key.split("_")[0] if "_" in ward_key else ward_key
+            res = enforcement_agent.run(
+                [reading],
+                _city_sources(parent_key),
+                _city_wards(ward_key),
+            )
             for d in res.get("dispatches", []):
-                d["ward_name"] = f"{d['ward_name']} ({k.capitalize()})"
+                if "_" in ward_key:
+                    d["ward_name"] = f"{d['ward_name']} ({parent_key.capitalize()})"
                 combined_dispatches.append(d)
 
         combined_dispatches.sort(key=lambda x: -x["priority_score"])
@@ -74,7 +77,7 @@ async def run_dispatch(
             "very_poor_count": sum(1 for h in combined_dispatches if h["severity"] == "very_poor"),
             "poor_count": sum(1 for h in combined_dispatches if h["severity"] == "poor"),
             "generated_at": datetime.now(timezone.utc).isoformat(),
-            "timestamp": readings_list[0][0]["timestamp"] if readings_list and readings_list[0] else None,
+            "timestamp": readings[0]["timestamp"] if readings else None,
         }
     readings = await sim.generate_readings(city)
     sources = _city_sources(city)

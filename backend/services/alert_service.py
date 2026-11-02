@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from typing import Optional, Dict, Any
 
 from database import SessionLocal, Alert, AlertSubscription
-from simulation import sim, CITIES
+from ml.simulation import sim, CITIES
 from services.guidance_service import _get_dynamic_guidance
 from services.email_service import _build_alert_email, _send_email
 

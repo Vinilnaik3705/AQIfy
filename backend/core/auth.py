@@ -109,7 +109,7 @@ def require_roles(*allowed_roles: Iterable[str]):
     allowed = {str(role).lower() for role in allowed_roles}
 
     async def dependency(current_user: User = Depends(get_current_user)):
-        role_name = (current_user.role.name if current_user.role else "Citizen").lower()
+        role_name = (current_user.role.name if current_user.role else "User").lower()
         if role_name not in allowed:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
@@ -118,4 +118,3 @@ def require_roles(*allowed_roles: Iterable[str]):
         return current_user
 
     return dependency
-

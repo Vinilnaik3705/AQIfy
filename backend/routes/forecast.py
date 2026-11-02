@@ -3,9 +3,9 @@ import logging
 from typing import Any
 from fastapi import APIRouter, Query
 
-from redis_client import cache_get_json, cache_set_json
-from simulation import sim, CITIES, DEFAULT_CITY, LIVE_CITIES
-from singletons import forecaster
+from core.redis_client import cache_get_json, cache_set_json
+from ml.simulation import sim, CITIES, DEFAULT_CITY, LIVE_CITIES
+from core.singletons import forecaster
 
 router = APIRouter()
 _FORECAST_IN_FLIGHT: dict[str, asyncio.Task] = {}

@@ -119,7 +119,7 @@ def _send_email(to_email: str, subject: str, html_body: str) -> bool:
                     f"DIAGNOSTIC WARNING: Resend API call failed when sending to: {to_email}\n"
                     f"If you are using Resend in Free/Sandbox mode (e.g. using onboarding@resend.dev),\n"
                     f"Resend RESTRICTS emails to ONLY your own registered account email address\n"
-                    f"(vinilnaikdharavath3705@gmail.com).\n\n"
+                    f"(the email address registered with your Resend account).\n\n"
                     f"HOW TO SEND TO OTHER EMAILS:\n"
                     f"Option A: Add & verify a custom sending domain in your Resend dashboard, then set RESEND_FROM_EMAIL.\n"
                     f"Option B: Use SMTP by adding these to your backend/.env file:\n"

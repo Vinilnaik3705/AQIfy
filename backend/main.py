@@ -7,16 +7,18 @@ and route modularization.
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import sys
 from datetime import datetime, timezone
+from pathlib import Path
 
 if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(Path(__file__).resolve().parent / ".env")
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -24,22 +26,24 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from database import init_db
-from forecaster import close_http_client, close_training_executor
+from ml.forecaster import close_http_client, close_training_executor
 from routes.agents import router as agents_router
 from routes.alerts import router as alerts_router
 from routes.auth import ensure_default_roles, router as auth_router
-from routes.cities import router as cities_router
+from routes.cities import _city_wards, router as cities_router
 from routes.forecast import router as forecast_router
 from routes.interventions import router as interventions_router
 from routes.state import router as state_router
 from routes.translate import router as translate_router
 from routes.websocket import router as websocket_router
 from services.alert_service import send_aqi_alerts
+from services.auto_dispatch import create_auto_interventions
 from services.email_service import _get_resend_key
-from simulation import close_simulation_http_client
-from singletons import (
+from ml.simulation import close_simulation_http_client, get_sources_for_city, sim
+from core.singletons import (
     _cancel_background_tasks,
     _schedule_background,
+    enforcement_agent,
     forecaster,
 )
 
@@ -95,10 +99,11 @@ app.include_router(translate_router)
 
 # ── Health Endpoint ───────────────────────────────────────────────────────────
 
+@app.get("/health")
 @app.get("/api/health")
 async def health_check():
     from database import SessionLocal
-    from redis_client import get_redis_client
+    from core.redis_client import get_redis_client
     from sqlalchemy import text
 
     redis_ok = await get_redis_client()
@@ -128,8 +133,8 @@ async def startup_event():
     # model duplicates large sklearn objects and competes with web requests on
     # a small web service. Requests still return live-data fallbacks and can
     # warm one city at a time through generate_ml_forecast().
-    from simulation import LIVE_CITIES
-    from simulation import DEFAULT_CITY
+    from ml.simulation import LIVE_CITIES
+    from ml.simulation import DEFAULT_CITY
 
     parent_cities = [k for k in LIVE_CITIES if "_" not in k]
     configured_startup_cities = [
@@ -172,6 +177,43 @@ async def startup_event():
 
     if background_jobs_enabled:
         _schedule_background(alert_loop())
+
+    async def auto_dispatch_loop():
+        interval = int(os.environ.get("AUTO_DISPATCH_INTERVAL", "300"))
+        auto_dispatch_log = logging.getLogger("auto_dispatch")
+        auto_dispatch_log.info("Starting autonomous dispatch loop with interval %ss", interval)
+        while True:
+            try:
+                total_created = 0
+                readings = await sim.generate_readings("all")
+                dispatches_by_city = {}
+                for reading in readings:
+                    city_key = reading["ward_id"].split("_")[0] if "_" in reading["ward_id"] else reading["ward_id"]
+                    dispatch_result = enforcement_agent.run(
+                        [reading],
+                        get_sources_for_city(city_key),
+                        _city_wards(reading["ward_id"]),
+                    )
+                    dispatches_by_city.setdefault(city_key, []).extend(dispatch_result.get("dispatches", []))
+                pending_dispatches = [
+                    (city_key, dispatch)
+                    for city_key, dispatches in dispatches_by_city.items()
+                    for dispatch in dispatches
+                    if dispatch.get("severity") in {"severe", "very_poor"}
+                ]
+                pending_dispatches.sort(key=lambda item: -float(item[1].get("priority_score", 0)))
+                for city_key, dispatch in pending_dispatches[:5]:
+                    total_created += create_auto_interventions(city_key, [dispatch])
+                auto_dispatch_log.info("Autonomous dispatch created %s interventions", total_created)
+            except Exception:
+                auto_dispatch_log.exception("Autonomous dispatch iteration failed")
+            await asyncio.sleep(interval)
+
+    if (
+        background_jobs_enabled
+        and os.getenv("AUTO_DISPATCH_ENABLED", "false").lower() == "true"
+    ):
+        _schedule_background(auto_dispatch_loop())
 
 
 @app.on_event("shutdown")

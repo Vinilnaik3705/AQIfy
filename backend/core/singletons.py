@@ -7,7 +7,7 @@ from agents import (
     EnforcementAgent,
     AdvisoryAgent,
 )
-from forecaster import AQIForecaster
+from ml.forecaster import AQIForecaster
 
 BACKGROUND_TASKS: Set[asyncio.Task] = set()
 

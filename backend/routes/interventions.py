@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Request
 
-from auth import get_current_user, require_roles
+from core.auth import get_current_user, require_roles
 from database import (
     Inspector,
     Intervention,
@@ -21,7 +21,7 @@ router = APIRouter()
 @router.post("/api/locations")
 async def upsert_location(
     request: Request,
-    current_user: User = Depends(require_roles(UserRole.AUTHORITY.value, UserRole.ADMIN.value)),
+    current_user: User = Depends(require_roles(UserRole.INSPECTOR.value)),
 ):
     body = await request.json()
     city_key = (body.get("city_key") or "unknown").strip()
@@ -55,11 +55,11 @@ async def upsert_location(
 
 @router.get("/api/interventions")
 async def list_interventions(
-    current_user: User = Depends(require_roles(UserRole.INSPECTOR.value, UserRole.AUTHORITY.value, UserRole.ADMIN.value)),
+    current_user: User = Depends(require_roles(UserRole.INSPECTOR.value)),
 ):
     db = SessionLocal()
     try:
-        role_name = current_user.role.name if current_user.role else UserRole.CITIZEN.value
+        role_name = current_user.role.name if current_user.role else UserRole.USER.value
         query = db.query(Intervention)
         if role_name == UserRole.INSPECTOR.value:
             inspector = db.query(Inspector).filter(Inspector.user_id == current_user.id).first()
@@ -106,7 +106,7 @@ async def list_interventions(
 @router.post("/api/interventions")
 async def create_intervention(
     request: Request,
-    current_user: User = Depends(require_roles(UserRole.AUTHORITY.value, UserRole.ADMIN.value)),
+    current_user: User = Depends(require_roles(UserRole.INSPECTOR.value)),
 ):
     body = await request.json()
     lat = float(body.get("latitude", 0.0))
@@ -130,9 +130,7 @@ async def create_intervention(
             db.commit()
             db.refresh(location)
         assigned_id = body.get("assigned_inspector_id")
-        role_name = current_user.role.name if current_user.role else UserRole.CITIZEN.value
-        if assigned_id and role_name != UserRole.ADMIN.value:
-            raise HTTPException(status_code=403, detail="Only administrators can dispatch an inspector")
+        role_name = current_user.role.name if current_user.role else UserRole.USER.value
         if assigned_id:
             inspector = db.query(Inspector).filter(Inspector.id == assigned_id).first()
             if not inspector:
@@ -157,12 +155,12 @@ async def create_intervention(
 @router.post("/api/interventions/dispatch")
 async def dispatch_intervention(
     request: Request,
-    current_user: User = Depends(require_roles(UserRole.ADMIN.value)),
+    current_user: User = Depends(require_roles(UserRole.INSPECTOR.value)),
 ):
     """Persist an evidence package as an assigned inspection task.
 
     This is intentionally separate from recommendation generation at
-    ``/api/agents/dispatch``. Only an Admin can create the assignment, and the
+    ``/api/agents/dispatch``. Only an Inspector can create the assignment, and the
     default reserved Inspector is selected when no explicit inspector id is
     supplied by the UI.
     """
@@ -262,12 +260,12 @@ async def update_intervention_status(
         intervention = db.query(Intervention).filter(Intervention.id == intervention_id).first()
         if not intervention:
             raise HTTPException(status_code=404, detail="Intervention not found")
-        role_name = current_user.role.name if current_user.role else UserRole.CITIZEN.value
+        role_name = current_user.role.name if current_user.role else UserRole.USER.value
         if role_name == UserRole.INSPECTOR.value:
             inspector = db.query(Inspector).filter(Inspector.user_id == current_user.id).first()
             if inspector is None or intervention.assigned_inspector_id != inspector.id:
                 raise HTTPException(status_code=403, detail="This inspector is not assigned to the intervention")
-        elif role_name not in {UserRole.AUTHORITY.value, UserRole.ADMIN.value}:
+        elif role_name != UserRole.INSPECTOR.value:
             raise HTTPException(status_code=403, detail="Access denied")
         intervention.status = status_value
         intervention.updated_at = datetime.now(timezone.utc)
@@ -293,12 +291,12 @@ async def add_intervention_findings(
         intervention = db.query(Intervention).filter(Intervention.id == intervention_id).first()
         if not intervention:
             raise HTTPException(status_code=404, detail="Intervention not found")
-        role_name = current_user.role.name if current_user.role else UserRole.CITIZEN.value
+        role_name = current_user.role.name if current_user.role else UserRole.USER.value
         if role_name == UserRole.INSPECTOR.value:
             inspector = db.query(Inspector).filter(Inspector.user_id == current_user.id).first()
             if inspector is None or intervention.assigned_inspector_id != inspector.id:
                 raise HTTPException(status_code=403, detail="This inspector is not assigned to the intervention")
-        elif role_name not in {UserRole.AUTHORITY.value, UserRole.ADMIN.value}:
+        elif role_name != UserRole.INSPECTOR.value:
             raise HTTPException(status_code=403, detail="Access denied")
 
         inspector_id = None
@@ -333,12 +331,12 @@ async def add_intervention_outcome(
         intervention = db.query(Intervention).filter(Intervention.id == intervention_id).first()
         if not intervention:
             raise HTTPException(status_code=404, detail="Intervention not found")
-        role_name = current_user.role.name if current_user.role else UserRole.CITIZEN.value
+        role_name = current_user.role.name if current_user.role else UserRole.USER.value
         if role_name == UserRole.INSPECTOR.value:
             inspector = db.query(Inspector).filter(Inspector.user_id == current_user.id).first()
             if inspector is None or intervention.assigned_inspector_id != inspector.id:
                 raise HTTPException(status_code=403, detail="This inspector is not assigned to the intervention")
-        elif role_name not in {UserRole.AUTHORITY.value, UserRole.ADMIN.value}:
+        elif role_name != UserRole.INSPECTOR.value:
             raise HTTPException(status_code=403, detail="Access denied")
 
         change_pct = 0.0

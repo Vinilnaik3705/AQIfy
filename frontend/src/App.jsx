@@ -16,7 +16,30 @@ const EnforcementView = lazy(() => import('./views/EnforcementView'))
 
 const FORECAST_HOURS = 72
 
-function InspectorAssignmentsPanel({ work, selectedWard, onOpenMap }) {
+function liveReadingForLocation(readings, location) {
+  if (!Array.isArray(readings) || !location) return null
+  const latitude = Number(location.latitude)
+  const longitude = Number(location.longitude)
+  return readings.find((reading) => (
+    reading.ward_id === location.city_key
+    || (
+      Number.isFinite(latitude)
+      && Number.isFinite(longitude)
+      && Math.abs(Number(reading.location?.[0]) - latitude) < 0.01
+      && Math.abs(Number(reading.location?.[1]) - longitude) < 0.01
+    )
+  )) || null
+}
+
+function severityForAqi(aqi) {
+  if (aqi >= 301) return 'severe'
+  if (aqi >= 201) return 'very_poor'
+  if (aqi >= 101) return 'poor'
+  if (aqi >= 51) return 'moderate'
+  return 'good'
+}
+
+function InspectorAssignmentsPanel({ work, selectedWard, liveReadings, onOpenMap }) {
   if (!work || work.length === 0) {
     return (
       <div style={{
@@ -33,7 +56,20 @@ function InspectorAssignmentsPanel({ work, selectedWard, onOpenMap }) {
   }
 
   const selectedAqi = selectedWard?.aqi_in ?? selectedWard?.current_aqi ?? selectedWard?.aqi ?? null
-  const selectedPollutants = selectedWard?.pollutants || {}
+  const selectedWork = work.find((item) => {
+    const location = item.location
+    return location && (
+      location.city_key === (selectedWard?.ward_key || selectedWard?.id)
+      || (
+        selectedWard?.center
+        && Math.abs(Number(location.latitude) - Number(selectedWard.center[0])) < 0.01
+        && Math.abs(Number(location.longitude) - Number(selectedWard.center[1])) < 0.01
+      )
+    )
+  }) || work[0]
+  const currentReading = liveReadingForLocation(liveReadings, selectedWork?.location)
+  const currentAqi = currentReading?.aqi_in ?? currentReading?.aqi ?? selectedWork?.aqi ?? selectedAqi
+  const selectedPollutants = currentReading?.pollutants || selectedWard?.pollutants || {}
 
   return (
     <div style={{
@@ -60,14 +96,23 @@ function InspectorAssignmentsPanel({ work, selectedWard, onOpenMap }) {
             borderRadius: '12px',
             padding: '12px 14px',
           }}>
-            <div style={{ fontWeight: 800, color: '#f8fafc', marginBottom: 6 }}>{item.location_name || item.location?.name || 'Assigned Location'}</div>
-            <div style={{ color: '#cbd5e1', fontSize: '12px', marginBottom: 8 }}>
-              {item.suspected_source || 'Source under review'} · {item.severity || 'moderate'}
-            </div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-              <span style={{ color: '#93c5fd', fontSize: '12px' }}>AQI</span>
-              <strong style={{ color: '#f8fafc' }}>{Math.round(item.aqi || selectedAqi || 0)}</strong>
-            </div>
+            {(() => {
+              const liveReading = liveReadingForLocation(liveReadings, item.location)
+              const currentAqi = liveReading?.aqi_in ?? liveReading?.aqi ?? item.aqi ?? 0
+              const currentSeverity = severityForAqi(currentAqi)
+              return (
+                <>
+                  <div style={{ fontWeight: 800, color: '#f8fafc', marginBottom: 6 }}>{item.location_name || item.location?.name || 'Assigned Location'}</div>
+                  <div style={{ color: '#cbd5e1', fontSize: '12px', marginBottom: 8 }}>
+                    {item.suspected_source || 'Source under review'} · {currentSeverity}
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                    <span style={{ color: '#93c5fd', fontSize: '12px' }}>AQI</span>
+                    <strong style={{ color: '#f8fafc' }}>{Math.round(currentAqi)}</strong>
+                  </div>
+                </>
+              )
+            })()}
             <div style={{ color: '#cbd5e1', fontSize: '12px', lineHeight: 1.6 }}>
               {item.description || 'Inspection required for this location.'}
             </div>
@@ -108,7 +153,7 @@ function InspectorAssignmentsPanel({ work, selectedWard, onOpenMap }) {
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: '12px' }}>
             <div style={{ background: 'rgba(30, 41, 59, 0.7)', borderRadius: '10px', padding: '10px 12px' }}>
               <div style={{ color: '#94a3b8', fontSize: '11px' }}>AQI</div>
-              <strong style={{ color: '#f8fafc', fontSize: '18px' }}>{Math.round(selectedAqi || 0)}</strong>
+              <strong style={{ color: '#f8fafc', fontSize: '18px' }}>{Math.round(currentAqi || 0)}</strong>
             </div>
             <div style={{ background: 'rgba(30, 41, 59, 0.7)', borderRadius: '10px', padding: '10px 12px' }}>
               <div style={{ color: '#94a3b8', fontSize: '11px' }}>PM2.5</div>
@@ -158,6 +203,7 @@ export default function App() {
 
   // Enforcement state
   const [dispatches, setDispatches] = useState(null)
+  const [dispatchLoadError, setDispatchLoadError] = useState(false)
   const [evidenceModal, setEvidenceModal] = useState(null)
   const [assignedWork, setAssignedWork] = useState([])
   const [dispatchingInspector, setDispatchingInspector] = useState(false)
@@ -176,9 +222,9 @@ export default function App() {
   const selectionRequestRef = useRef(0)
   const selectionAbortRef = useRef(null)
 
-  const roleName = auth?.user?.role || 'Citizen'
-  const canViewEnforcement = ['Inspector', 'Authority', 'Admin'].includes(roleName)
-  const canDispatchInspector = roleName === 'Admin'
+  const roleName = auth?.user?.role || 'User'
+  const canViewEnforcement = roleName === 'Inspector'
+  const canDispatchInspector = roleName === 'Inspector'
 
   const handleAuthenticate = useCallback((nextAuth) => {
     setAuth(nextAuth)
@@ -247,6 +293,21 @@ export default function App() {
     const data = await fetchJSON('/api/state?city=all')
     if (data) {
       setState(data)
+      setSelectedWard((previous) => {
+        if (!previous) return previous
+        const liveWard = data.wards?.find((ward) => ward.id === (previous.ward_key || previous.id))
+        const liveReading = data.sensors?.find((reading) => reading.ward_id === (previous.ward_key || previous.id))
+        if (!liveWard && !liveReading) return previous
+        return {
+          ...previous,
+          ...(liveWard || {}),
+          ...(liveReading || {}),
+          id: previous.id,
+          ward_key: previous.ward_key || previous.id,
+          name: previous.name || liveWard?.name,
+          center: previous.center || liveWard?.center,
+        }
+      })
       setStateError(false)
     }
   }, [])
@@ -342,19 +403,36 @@ export default function App() {
 
   const loadDispatches = useCallback(async () => {
     const data = await fetchJSON('/api/agents/dispatch?city=all', { method: 'POST' })
-    if (data) setDispatches(data)
+    if (data) {
+      setDispatches(data)
+      setDispatchLoadError(false)
+    } else {
+      setDispatchLoadError(true)
+    }
   }, [])
 
   useEffect(() => {
     if (!auth?.user) return
-    if (roleName === 'Inspector' || roleName === 'Authority' || roleName === 'Admin') {
+    if (roleName === 'Inspector') {
       let cancelled = false
-      fetchJSON('/api/interventions').then((data) => {
+      const refreshAssignedWork = () => fetchJSON('/api/interventions').then((data) => {
         if (!cancelled && Array.isArray(data)) {
           setAssignedWork(data)
         }
       })
-      return () => { cancelled = true }
+      refreshAssignedWork()
+      const interval = setInterval(() => {
+        if (!document.hidden) refreshAssignedWork()
+      }, 30000)
+      const onVisible = () => {
+        if (!document.hidden) refreshAssignedWork()
+      }
+      document.addEventListener('visibilitychange', onVisible)
+      return () => {
+        cancelled = true
+        clearInterval(interval)
+        document.removeEventListener('visibilitychange', onVisible)
+      }
     }
     const clearAssignedWork = setTimeout(() => setAssignedWork([]), 0)
     return () => clearTimeout(clearAssignedWork)
@@ -364,7 +442,13 @@ export default function App() {
     if (!canViewEnforcement || tab !== 'enforcement') return
     let cancelled = false
     fetchJSON('/api/agents/dispatch?city=all', { method: 'POST' }).then((data) => {
-      if (data && !cancelled) setDispatches(data)
+      if (cancelled) return
+      if (data) {
+        setDispatches(data)
+        setDispatchLoadError(false)
+      } else {
+        setDispatchLoadError(true)
+      }
     })
     return () => { cancelled = true }
   }, [tab, canViewEnforcement])
@@ -416,7 +500,7 @@ export default function App() {
       setTargetZoom(10)
     }
 
-    const data = await fetchJSON(`/api/aqi-details?lat=${ward.center[0]}&lng=${ward.center[1]}&name=${encodeURIComponent(ward.name)}&country=${encodeURIComponent(ward.country || '')}&state=${encodeURIComponent(ward.state || '')}`, { signal: controller.signal })
+    const data = await fetchJSON(`/api/aqi-details?lat=${ward.center[0]}&lng=${ward.center[1]}&name=${encodeURIComponent(ward.name)}&country=${encodeURIComponent(ward.country || '')}&state=${encodeURIComponent(ward.state || '')}&ward_id=${encodeURIComponent(ward.id)}`, { signal: controller.signal })
     if (data && requestId === selectionRequestRef.current && !controller.signal.aborted) {
       // Preserve the original ward id (e.g. "hyderabad_lb_nagar") so forecast
       // lookups can still match ward_id in the forecast wards array.
@@ -548,7 +632,12 @@ export default function App() {
         {tab === 'command' && (
           <>
             {roleName === 'Inspector' && (
-              <InspectorAssignmentsPanel work={assignedWork} selectedWard={selectedWard} onOpenMap={handleOpenDispatchMap} />
+              <InspectorAssignmentsPanel
+                work={assignedWork}
+                selectedWard={selectedWard}
+                liveReadings={state?.sensors}
+                onOpenMap={handleOpenDispatchMap}
+              />
             )}
             <div className="title-section">
               <h1 className="main-title">Live Air Quality Map</h1>
@@ -578,6 +667,7 @@ export default function App() {
           >
             <EnforcementView
               dispatches={dispatches}
+              dispatchLoadError={dispatchLoadError}
               onRefresh={loadDispatches}
               onViewEvidence={setEvidenceModal}
               onOpenMap={handleOpenDispatchMap}
@@ -586,7 +676,7 @@ export default function App() {
         )}
         {tab === 'enforcement' && !canViewEnforcement && (
              <div style={{ padding: '32px 20px', textAlign: 'center', color: '#cbd5e1' }}>
-             EnforceHub is available only to inspectors, authorities, and administrators.
+             EnforceHub is available only to inspectors.
           </div>
         )}
       </main>

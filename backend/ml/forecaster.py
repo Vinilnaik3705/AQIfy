@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Dict, List, Any, Tuple, Optional
 from sklearn.ensemble import GradientBoostingRegressor
 from scipy.interpolate import PchipInterpolator
-from simulation import (CITIES, DEFAULT_CITY, LIVE_CITIES, calculate_indian_aqi,
+from ml.simulation import (CITIES, DEFAULT_CITY, LIVE_CITIES, calculate_indian_aqi,
                         calibrate_india_pollutants,
                         _us_aqi_to_pm25, _us_aqi_to_pm10, _get_openweather_key,
                         _get_weatherapi_key)
@@ -1112,7 +1112,7 @@ class AQIForecaster:
         if not model_info:
             if forecast_weather and forecast_raw_aqi:
                 # Fetch current real AQI to smooth the transition for fallback
-                from simulation import _fetch_real_aqi
+                from ml.simulation import _fetch_real_aqi
                 real_aqi_data = await _fetch_real_aqi(lat, lng)
                 current_aqi = real_aqi_data["aqi"] if real_aqi_data else 50.0
                 return self._generate_real_fallback(city_key, hours, forecast_weather, forecast_raw_aqi, current_aqi)
@@ -1133,7 +1133,7 @@ class AQIForecaster:
         now_idx = len(aqi_series) - 1
         
         # Anchor the forecast starting point to stable cached real-time CPCB / Open-Meteo reading
-        from simulation import sim
+        from ml.simulation import sim
         try:
             readings = await sim.generate_readings(city_key)
             if readings and len(readings) > 0:

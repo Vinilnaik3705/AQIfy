@@ -21,6 +21,10 @@ Every hour, for each city/ward, the platform fuses **five data families** — CP
 | 🧭 **Decision support** | *What to do, who does it, how much it helps, at what confidence & cost?* | Decision Layer |
 | 🗣️ **Citizen advisory** | *What should residents do — in their language?* | Module #5 |
 
+For interview preparation, [Amazon Leadership Principles examples](docs/13-amazon-leadership-principles.md)
+maps the project's implemented behavior to specific principles without overstating prototype
+capabilities.
+
 ---
 
 ## 🏗️ System Architecture & Data Flow
@@ -113,16 +117,16 @@ The codebase is cleanly separated into backend service modules and a modular Rea
 
 ### Backend Architecture (`/backend`)
 * **`main.py`**: The entry point exposing HTTP REST endpoints, handling CORS, serving static assets, administering double-opt-in SQLite subscriptions, and connecting to the Google Gemini API.
-* **`simulation.py`**: The spatial simulation and data acquisition engine.
+* **`backend/ml/simulation.py`**: The spatial simulation and data acquisition engine.
   * Dynamically queries the **Open-Meteo Air Quality API** to pull live pollutants (PM₂.₅, PM₁₀, NO₂, SO₂, CO, O₃).
   * Manages coordinates, wards, and emission sources for dozens of major Indian cities.
   * Simulates the mathematical mitigation impact of active interventions on hyperlocal grid coordinate concentrations.
-* **`agents.py`**: Coordinates the 4 core AI Agents:
+* **`backend/agents/agents.py`**: Coordinates the 4 core AI Agents:
   1. **AttributionAgent**: Identifies probable pollution sources by running inverse-distance weighting (IDW) against known emission inventories, boosted by real-time chemical signatures (NO₂/CO for vehicles, SO₂ for industrial stacks). Uses a **triangulated** approach: (1) TreeSHAP temporal decomposition, (2) spatial ridge on land-use covariates, (3) wind-sector lift as a directional cross-check → 5 source shares + a confidence badge, explicitly labelled *"evidence-weighted, not regulatory source apportionment."*
   2. **PredictiveAgent**: Interacts with the forecasting model to yield predictive thresholds.
   3. **EnforcementAgent**: Scores hotspot severity using vulnerability multipliers (hospitals/school densities) to construct **prioritized field dispatch recommendations** with ward-specific context, legal basis references (CPCB/GRAP/EPA Act), responsible departments, quantified AQI impact estimates, and time-bound deadlines. Evidence packages are court-ready.
   4. **AdvisoryAgent**: Translates metrics into actionable, localized safety advisories tailored to distinct profiles (asthma, elderly, outdoor worker, healthy adult) across 9 Indian languages (English, Hindi, Kannada, Tamil, Telugu, Malayalam, Marathi, Gujarati, Bengali).
-* **`forecaster.py`**: Direct-horizon ML forecasting model.
+* **`backend/ml/forecaster.py`**: Direct-horizon ML forecasting model.
   * Utilizes `scikit-learn`'s `GradientBoostingRegressor` to predict future AQI values at 24-72 hour timelines.
   * Compares forecast performance (`ml_mae`) directly against a live `persistence_baseline` (`persistence_mae`), outputting a mathematical `skill_score`.
 
@@ -210,9 +214,22 @@ The platform is designed around the core evaluation objectives defined by enviro
 ### 1. Set Up Environment Variables
 Create a file named `.env` in the `backend/` directory:
 ```env
+APP_ENV=development
+DATABASE_URL=sqlite:///./aqify.db
+CORS_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
 GEMINI_API_KEY=your_gemini_api_key_here
 BREVO_API_KEY=your_optional_brevo_smtp_api_key
 RESEND_API_KEY=your_optional_resend_api_key
+```
+
+Use the SQLite `DATABASE_URL` above for local development. For deployment, replace
+it with a reachable PostgreSQL URL supplied by the hosting environment. A
+database URL inherited from an old shell or IDE environment takes precedence
+over `.env`; clear it before starting locally if it still points to a remote
+database:
+
+```powershell
+Remove-Item Env:DATABASE_URL -ErrorAction SilentlyContinue
 ```
 
 ### 2. Run the FastAPI Backend (Terminal 1)
@@ -234,7 +251,7 @@ Public registration always creates a **Citizen** account. A citizen cannot selec
 or self-assign an Inspector, Authority, or Admin role.
 
 The initial administrator is the reserved account `admin@aqify.local`; its
-password is supplied only through `DEFAULT_ADMIN_PASSWORD` in the backend
+password is supplied only through `DEFAULT_INSPECTOR_PASSWORD` in the backend
 environment. Inspector and Authority reserved accounts are similarly created
 from `inspector@aqify.local` / `authority@aqify.local` and their corresponding
 environment passwords. In production, these values are required and must not

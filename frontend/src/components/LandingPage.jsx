@@ -2,9 +2,7 @@ import {
   Activity,
   ArrowRight,
   BarChart3,
-  BellRing,
   CloudSun,
-  MapPin,
   Radio,
   ShieldCheck,
   Wind,
@@ -43,8 +41,6 @@ const valueProps = [
   },
 ]
 
-const chartBars = [38, 52, 46, 68, 61, 76, 58, 44, 50, 32, 42, 28]
-
 export default function LandingPage({ onLogin = noop, onRegister = noop }) {
   return (
     <main style={styles.page}>
@@ -82,44 +78,6 @@ export default function LandingPage({ onLogin = noop, onRegister = noop }) {
           <div style={styles.reassurance}><ShieldCheck size={16} color="#0f766e" /> Built for citizens, teams, and city leaders</div>
         </div>
 
-        <div style={styles.dashboardWrap} aria-label="AQIfy air-quality dashboard preview">
-          <div style={styles.dashboardCard}>
-            <div style={styles.dashboardTopline}>
-              <div>
-                <div style={styles.dashboardLabel}>CITY AIR QUALITY</div>
-                <div style={styles.location}><MapPin size={14} color="#e11d48" /> Bengaluru, India</div>
-              </div>
-              <div style={styles.liveBadge}><span style={styles.liveDot} /> LIVE</div>
-            </div>
-
-            <div style={styles.aqiRow}>
-              <div>
-                <div style={styles.aqiLabel}>Current AQI</div>
-                <div style={styles.aqiValue}>84<span style={styles.aqiUnit}> / 500</span></div>
-                <div style={styles.aqiStatus}><span style={styles.statusDot} /> Moderate · Updated 2 min ago</div>
-              </div>
-              <div style={styles.aqiRing}>
-                <div style={styles.aqiRingInner}><span>84</span><small>AQI</small></div>
-              </div>
-            </div>
-
-            <div style={styles.chartHeader}><span>Last 12 hours</span><span style={styles.chartLegend}><span style={styles.legendLine} /> AQI trend</span></div>
-            <div style={styles.chart} aria-hidden="true">
-              {chartBars.map((height, index) => (
-                <div key={`${height}-${index}`} style={styles.barColumn}>
-                  <div style={{ ...styles.bar, height: `${height}%`, background: index > 7 ? '#fda4af' : '#fb7185' }} />
-                </div>
-              ))}
-            </div>
-            <div style={styles.chartAxis}><span>08:00</span><span>14:00</span><span>20:00</span></div>
-
-            <div style={styles.metricGrid}>
-              <div style={styles.metric}><span style={styles.metricIcon}><Wind size={14} /></span><span><b>PM2.5</b><small> 28 µg/m³</small></span></div>
-              <div style={styles.metric}><span style={{ ...styles.metricIcon, color: '#2563eb', background: '#dbeafe' }}><CloudSun size={14} /></span><span><b>Forecast</b><small> Improving</small></span></div>
-            </div>
-          </div>
-          <div style={styles.floatingAlert}><span style={styles.alertIcon}><BellRing size={15} /></span><span><b>New insight available</b><small>Traffic corridor elevated</small></span></div>
-        </div>
       </section>
 
       <section style={styles.statStrip} aria-label="AQIfy platform highlights">

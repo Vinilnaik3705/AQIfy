@@ -1,6 +1,7 @@
 import os
 from datetime import datetime, timezone
 from enum import Enum
+from pathlib import Path
 
 from sqlalchemy import (
     Boolean,
@@ -20,8 +21,11 @@ from sqlalchemy import (
     text,
 )
 from sqlalchemy.orm import declarative_base, relationship, sessionmaker
+from dotenv import load_dotenv
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")
+
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEFAULT_DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{os.path.join(BASE_DIR, 'aqify.db')}")
 
 connect_args = {"check_same_thread": False} if DEFAULT_DATABASE_URL.startswith("sqlite") else {}
@@ -31,10 +35,8 @@ Base = declarative_base()
 
 
 class UserRole(str, Enum):
-    CITIZEN = "Citizen"
+    USER = "User"
     INSPECTOR = "Inspector"
-    AUTHORITY = "Authority"
-    ADMIN = "Admin"
 
 
 class Role(Base):
@@ -82,9 +84,6 @@ class Location(Base):
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
     updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), nullable=False)
 
-    pollution_readings = relationship("PollutionReading", back_populates="location", passive_deletes=True)
-    weather_readings = relationship("WeatherReading", back_populates="location", passive_deletes=True)
-    forecasts = relationship("Forecast", back_populates="location", cascade="all, delete-orphan")
     subscriptions = relationship("AlertSubscription", back_populates="location", cascade="all, delete-orphan")
     alerts = relationship("Alert", back_populates="location")
     interventions = relationship("Intervention", back_populates="location")
@@ -94,84 +93,6 @@ class Location(Base):
         CheckConstraint("latitude >= -90 AND latitude <= 90", name="ck_locations_latitude_range"),
         CheckConstraint("longitude >= -180 AND longitude <= 180", name="ck_locations_longitude_range"),
         Index("ix_locations_city_lat_lng", "city_key", "latitude", "longitude"),
-    )
-
-
-class PollutionReading(Base):
-    __tablename__ = "pollution_readings"
-
-    id = Column(Integer, primary_key=True)
-    location_id = Column(Integer, ForeignKey("locations.id"), nullable=False, index=True)
-    timestamp = Column(DateTime(timezone=True), nullable=False, index=True)
-    aqi = Column(Float, nullable=False)
-    aqi_in = Column(Float, nullable=True)
-    pm25 = Column(Float, nullable=True)
-    pm10 = Column(Float, nullable=True)
-    no2 = Column(Float, nullable=True)
-    so2 = Column(Float, nullable=True)
-    o3 = Column(Float, nullable=True)
-    co = Column(Float, nullable=True)
-    source = Column(String(100), nullable=True)
-    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
-
-    location = relationship("Location", back_populates="pollution_readings")
-
-    __table_args__ = (
-        CheckConstraint("aqi >= 0 AND aqi <= 500", name="ck_pollution_readings_aqi_range"),
-        CheckConstraint("aqi_in IS NULL OR (aqi_in >= 0 AND aqi_in <= 500)", name="ck_pollution_readings_aqi_in_range"),
-        CheckConstraint("pm25 IS NULL OR pm25 >= 0", name="ck_pollution_readings_pm25_nonnegative"),
-        CheckConstraint("pm10 IS NULL OR pm10 >= 0", name="ck_pollution_readings_pm10_nonnegative"),
-        CheckConstraint("no2 IS NULL OR no2 >= 0", name="ck_pollution_readings_no2_nonnegative"),
-        CheckConstraint("so2 IS NULL OR so2 >= 0", name="ck_pollution_readings_so2_nonnegative"),
-        CheckConstraint("o3 IS NULL OR o3 >= 0", name="ck_pollution_readings_o3_nonnegative"),
-        CheckConstraint("co IS NULL OR co >= 0", name="ck_pollution_readings_co_nonnegative"),
-        UniqueConstraint("location_id", "timestamp", name="uq_pollution_location_timestamp"),
-        Index("ix_pollution_readings_location_time", "location_id", "timestamp"),
-    )
-
-
-class WeatherReading(Base):
-    __tablename__ = "weather_readings"
-
-    id = Column(Integer, primary_key=True)
-    location_id = Column(Integer, ForeignKey("locations.id"), nullable=False, index=True)
-    timestamp = Column(DateTime(timezone=True), nullable=False, index=True)
-    temperature_c = Column(Float, nullable=True)
-    humidity_pct = Column(Float, nullable=True)
-    wind_speed_kmh = Column(Float, nullable=True)
-    precipitation_mm = Column(Float, nullable=True)
-    source = Column(String(100), nullable=True)
-    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
-
-    location = relationship("Location", back_populates="weather_readings")
-
-    __table_args__ = (
-        CheckConstraint("humidity_pct IS NULL OR (humidity_pct >= 0 AND humidity_pct <= 100)", name="ck_weather_readings_humidity_range"),
-        CheckConstraint("wind_speed_kmh IS NULL OR wind_speed_kmh >= 0", name="ck_weather_readings_wind_speed_nonnegative"),
-        CheckConstraint("precipitation_mm IS NULL OR precipitation_mm >= 0", name="ck_weather_readings_precipitation_nonnegative"),
-        UniqueConstraint("location_id", "timestamp", name="uq_weather_location_timestamp"),
-        Index("ix_weather_readings_location_time", "location_id", "timestamp"),
-    )
-
-
-class Forecast(Base):
-    __tablename__ = "forecasts"
-
-    id = Column(Integer, primary_key=True)
-    location_id = Column(Integer, ForeignKey("locations.id"), nullable=False, index=True)
-    forecast_time = Column(DateTime(timezone=True), nullable=False, index=True)
-    predicted_aqi = Column(Float, nullable=False)
-    confidence = Column(Float, nullable=True)
-    model_type = Column(String(80), nullable=True)
-    source = Column(String(100), nullable=True)
-    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
-
-    location = relationship("Location", back_populates="forecasts")
-
-    __table_args__ = (
-        CheckConstraint("predicted_aqi >= 0 AND predicted_aqi <= 500", name="ck_forecasts_predicted_aqi_range"),
-        CheckConstraint("confidence IS NULL OR (confidence >= 0 AND confidence <= 1)", name="ck_forecasts_confidence_range"),
-        Index("ix_forecasts_location_time", "location_id", "forecast_time"),
     )
 
 
@@ -340,7 +261,17 @@ Inspector.findings = relationship("InvestigationFinding", back_populates="inspec
 
 def init_db() -> None:
     Base.metadata.create_all(bind=engine)
+    _remove_unused_legacy_tables()
     _ensure_legacy_sqlite_columns()
+
+
+def _remove_unused_legacy_tables() -> None:
+    """Remove tables from the retired persistence-only AQI pipeline."""
+    with engine.begin() as connection:
+        existing_tables = set(inspect(engine).get_table_names())
+        for table_name in ("forecasts", "weather_readings", "pollution_readings"):
+            if table_name in existing_tables:
+                connection.execute(text(f'DROP TABLE "{table_name}"'))
 
 
 def _ensure_legacy_sqlite_columns() -> None:
@@ -357,33 +288,40 @@ def _ensure_legacy_sqlite_columns() -> None:
         return
 
     inspector = inspect(engine)
-    if "alert_subscriptions" not in inspector.get_table_names():
-        return
-
-    existing = {column["name"] for column in inspector.get_columns("alert_subscriptions")}
-    missing = {
-        "ward_id": "VARCHAR(120)",
-        "email": "VARCHAR(255)",
-        "profile": "VARCHAR(50)",
-        "confirm_token": "VARCHAR(64)",
-        "confirmed": "BOOLEAN NOT NULL DEFAULT 1",
-        "last_alerted_aqi": "FLOAT NOT NULL DEFAULT 0",
-        "lang": "VARCHAR(10) NOT NULL DEFAULT 'en'",
-    }
-
     with engine.begin() as connection:
-        for name, definition in missing.items():
-            if name not in existing:
-                connection.execute(text(f"ALTER TABLE alert_subscriptions ADD COLUMN {name} {definition}"))
+        if "alert_subscriptions" in inspector.get_table_names():
+            existing = {column["name"] for column in inspector.get_columns("alert_subscriptions")}
+            missing = {
+                "ward_id": "VARCHAR(120)",
+                "email": "VARCHAR(255)",
+                "profile": "VARCHAR(50)",
+                "confirm_token": "VARCHAR(64)",
+                "confirmed": "BOOLEAN NOT NULL DEFAULT 1",
+                "last_alerted_aqi": "FLOAT NOT NULL DEFAULT 0",
+                "lang": "VARCHAR(10) NOT NULL DEFAULT 'en'",
+            }
+            for name, definition in missing.items():
+                if name not in existing:
+                    connection.execute(text(f"ALTER TABLE alert_subscriptions ADD COLUMN {name} {definition}"))
 
-        connection.execute(text(
-            "CREATE UNIQUE INDEX IF NOT EXISTS uq_alert_subscriptions_confirm_token "
-            "ON alert_subscriptions (confirm_token)"
-        ))
-        connection.execute(text(
-            "CREATE UNIQUE INDEX IF NOT EXISTS uq_public_email_ward_subscription "
-            "ON alert_subscriptions (email, ward_id)"
-        ))
+            connection.execute(text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS uq_alert_subscriptions_confirm_token "
+                "ON alert_subscriptions (confirm_token)"
+            ))
+            connection.execute(text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS uq_public_email_ward_subscription "
+                "ON alert_subscriptions (email, ward_id)"
+            ))
+
+        if "interventions" in inspector.get_table_names():
+            existing = {column["name"] for column in inspector.get_columns("interventions")}
+            missing = {
+                "priority_score": "FLOAT NOT NULL DEFAULT 0",
+                "recommendation": "TEXT",
+            }
+            for name, definition in missing.items():
+                if name not in existing:
+                    connection.execute(text(f"ALTER TABLE interventions ADD COLUMN {name} {definition}"))
 
 
 def get_db_session():

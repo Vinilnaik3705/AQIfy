@@ -1207,7 +1207,7 @@ IMPORTANT: Return ONLY the raw JSON object. Do not wrap it in markdown block quo
                     }]
                 }
 
-                from simulation import HTTP_CLIENT
+                from ml.simulation import HTTP_CLIENT
                 resp = await HTTP_CLIENT.post(url, json=payload, headers=headers)
                 if resp.status_code == 200:
                     res_data = resp.json()

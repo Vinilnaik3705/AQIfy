@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Query
 
-from forecaster import get_http_client
-from simulation import (
+from ml.forecaster import get_http_client
+from ml.simulation import (
     CITIES,
     DEFAULT_CITY,
     get_nearest_live_city,
@@ -112,9 +112,19 @@ async def get_aqi_details(
     name: str,
     country: str = "",
     state: str = "",
+    ward_id: str = "",
 ):
     """Fetch live AQI and weather details for any latitude and longitude and compute Indian AQI."""
-    aqi_data = await _fetch_real_aqi(lat, lng)
+    snapshot = None
+    if ward_id in CITIES:
+        readings = await sim.generate_readings("all")
+        snapshot = next((reading for reading in readings if reading["ward_id"] == ward_id), None)
+
+    aqi_data = (
+        {**snapshot["pollutants"], "aqi": snapshot["aqi"]}
+        if snapshot
+        else await _fetch_real_aqi(lat, lng)
+    )
     if not aqi_data:
         aqi_data = {
             "aqi": 50,
@@ -130,13 +140,17 @@ async def get_aqi_details(
     pm25 = aqi_data["pm25"]
     pm10 = aqi_data["pm10"]
 
-    aqi_in = calculate_indian_aqi(
-        pm25,
-        pm10,
-        aqi_data["no2"],
-        aqi_data["so2"],
-        aqi_data["co"],
-        aqi_data["o3"],
+    aqi_in = (
+        snapshot.get("aqi_in", snapshot["aqi"])
+        if snapshot
+        else calculate_indian_aqi(
+            pm25,
+            pm10,
+            aqi_data["no2"],
+            aqi_data["so2"],
+            aqi_data["co"],
+            aqi_data["o3"],
+        )
     )
 
     weather = await _fetch_live_weather(lat, lng)

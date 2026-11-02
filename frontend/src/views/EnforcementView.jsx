@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import { RefreshCw, FileText, Navigation } from 'lucide-react'
 
-export default function EnforcementView({ dispatches, onRefresh, onViewEvidence, onOpenMap }) {
+export default function EnforcementView({ dispatches, dispatchLoadError, onRefresh, onViewEvidence, onOpenMap }) {
   const [selectedIndex, setSelectedIndex] = useState(0)
   const [scanning, setScanning] = useState(false)
 
@@ -13,7 +13,7 @@ export default function EnforcementView({ dispatches, onRefresh, onViewEvidence,
     setTimeout(() => setScanning(false), 1800)
   }
 
-  // Use REAL dispatch data from backend EnforcementAgent (only shows AQI >= 201 i.e. poor+)
+  // Use real dispatch data from the backend EnforcementAgent (AQI >= 101).
   const allDispatches = dispatches?.dispatches || []
 
   // Sort by state name (extracted from ward_name which is formatted as "WardName (CityKey)")
@@ -73,7 +73,11 @@ export default function EnforcementView({ dispatches, onRefresh, onViewEvidence,
               </button>
             </div>
 
-            {sortedDispatches.length > 0 ? (
+            {dispatchLoadError ? (
+              <div style={{ textAlign: 'center', padding: '40px 20px', color: '#b91c1c', fontSize: '13px' }}>
+                Couldn't load hotspots. Please retry.
+              </div>
+            ) : sortedDispatches.length > 0 ? (
               <div className="telemetry-list" style={{ maxHeight: '500px', overflowY: 'auto' }}>
                 {sortedDispatches.map((item, idx) => (
                   <div
@@ -101,7 +105,7 @@ export default function EnforcementView({ dispatches, onRefresh, onViewEvidence,
               </div>
             ) : (
               <div style={{ textAlign: 'center', padding: '40px 20px', color: '#64748b', fontSize: '13px' }}>
-                {scanning ? 'Scanning for pollution hotspots...' : 'No active pollution hotspots detected (AQI < 201 across all wards). Air quality is acceptable.'}
+                {scanning ? 'Scanning for pollution hotspots...' : 'No active pollution hotspots detected (AQI ≥ 101 across all wards).'}
               </div>
             )}
           </div>
@@ -241,4 +245,3 @@ export default function EnforcementView({ dispatches, onRefresh, onViewEvidence,
     </div>
   )
 }
-

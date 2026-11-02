@@ -1,10 +1,10 @@
-"""Compatibility facade for the legacy database.py module."""
+"""Compatibility facade for the shared database module."""
 
 import importlib.util
 from pathlib import Path
 
 
-_legacy_path = Path(__file__).resolve().parent.parent / "database.py"
+_legacy_path = Path(__file__).resolve().parent.parent / "core" / "database.py"
 _spec = importlib.util.spec_from_file_location("_aqify_database_legacy", _legacy_path)
 if _spec is None or _spec.loader is None:
 	raise ImportError(f"Unable to load database models from {_legacy_path}")

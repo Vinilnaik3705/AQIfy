@@ -1,0 +1,171 @@
+:root {
+  --aqi-diagram-border: #cbd5e1;
+  --aqi-diagram-shadow: 0 10px 30px rgba(30, 41, 59, 0.08);
+}
+
+/* Keep large architecture and ER diagrams readable without forcing the page
+   itself to become wider. The viewport scrolls horizontally when zoomed. */
+.aqi-diagram,
+.aqi-mermaid {
+  position: relative;
+  width: 100%;
+  max-width: 100%;
+  min-height: 320px;
+  margin: 1.25rem 0 1.75rem;
+  overflow: hidden;
+  border: 1px solid var(--aqi-diagram-border);
+  border-radius: 0.75rem;
+  background: #ffffff;
+  box-shadow: var(--aqi-diagram-shadow);
+}
+
+.aqi-diagram-viewport {
+  width: 100%;
+  min-height: 320px;
+  overflow: auto;
+  padding: 3.5rem 1rem 1rem;
+  box-sizing: border-box;
+  background:
+    linear-gradient(rgba(148, 163, 184, 0.08) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(148, 163, 184, 0.08) 1px, transparent 1px),
+    #ffffff;
+  background-size: 24px 24px;
+}
+
+.aqi-diagram-viewport svg {
+  display: block;
+  max-width: none;
+  margin: 0 auto;
+  background: #ffffff;
+}
+
+.aqi-diagram-viewport .nodeLabel,
+.aqi-diagram-viewport .edgeLabel,
+.aqi-diagram-viewport .label,
+.aqi-diagram-viewport text {
+  font-size: 18px;
+}
+
+.aqi-diagram-controls {
+  position: absolute;
+  right: 0.75rem;
+  bottom: 0.75rem;
+  z-index: 5;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.3rem;
+  border: 1px solid #94a3b8;
+  border-radius: 0.6rem;
+  background: rgba(15, 23, 42, 0.96);
+  box-shadow: 0 3px 12px rgba(15, 23, 42, 0.3);
+}
+
+.aqi-diagram-button {
+  min-width: 2rem;
+  height: 2rem;
+  padding: 0 0.45rem;
+  border: 1px solid #64748b;
+  border-radius: 0.4rem;
+  background: #ffffff;
+  color: #172033;
+  cursor: pointer;
+  font-size: 1.05rem;
+  line-height: 1;
+}
+
+.aqi-diagram-button:hover,
+.aqi-diagram-button:focus-visible {
+  border-color: #93c5fd;
+  background: #e8f0ff;
+  outline: none;
+}
+
+.aqi-diagram-zoom-label {
+  min-width: 3.3rem;
+  color: #ffffff;
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.aqi-diagram-status {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.aqi-diagram-source {
+  margin: 0 1rem 1rem;
+  border-top: 1px solid #e2e8f0;
+  color: #334155;
+  font-size: 0.86rem;
+}
+
+.aqi-diagram-source summary {
+  padding: 0.75rem 0;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.aqi-diagram-source pre {
+  max-height: 18rem;
+  margin: 0 0 0.75rem;
+  overflow: auto;
+  padding: 0.85rem;
+  border: 1px solid #e2e8f0;
+  border-radius: 0.5rem;
+  color: #1e293b;
+  background: #f8fafc;
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+/* Mermaid's native labels stay crisp inside the lightbox and remain legible
+   at the default page zoom. */
+.aqi-diagram-viewport .nodeLabel,
+.aqi-diagram-viewport .edgeLabel,
+.aqi-diagram-viewport .label {
+  font-family: Inter, Roboto, Arial, sans-serif;
+}
+
+.aqi-diagram-failed {
+  min-height: 0;
+  overflow: auto;
+}
+
+.aqi-diagram-error {
+  padding: 1rem;
+  color: #7f1d1d;
+  background: #fff7f7;
+}
+
+.aqi-diagram-error span {
+  display: block;
+  margin-top: 0.35rem;
+  color: #991b1b;
+}
+
+.aqi-diagram-error pre {
+  margin-top: 1rem;
+  overflow: auto;
+  color: #172033;
+  background: #ffffff;
+}
+
+@media (max-width: 700px) {
+  .aqi-diagram-viewport {
+    padding-inline: 0.5rem;
+  }
+
+  .aqi-diagram-controls {
+    right: 0.5rem;
+    bottom: 0.5rem;
+  }
+}

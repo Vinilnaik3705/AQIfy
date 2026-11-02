@@ -5,9 +5,9 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, Query
 
-from auth import require_roles
+from core.auth import require_roles
 from database import User, UserRole
-from redis_client import cache_get_json, cache_set_json
+from core.redis_client import cache_get_json, cache_set_json
 
 router = APIRouter()
 _STATE_IN_FLIGHT: dict[str, asyncio.Task] = {}
@@ -37,15 +37,15 @@ async def _set_cached_state(city: str, payload: Any):
 
 
 @router.post("/api/cache/clear")
-async def clear_cache(current_user: User = Depends(require_roles(UserRole.ADMIN.value))):
-    from simulation import sim
+async def clear_cache(current_user: User = Depends(require_roles(UserRole.INSPECTOR.value))):
+    from ml.simulation import sim
     sim.invalidate_cache()
     return {"status": "ok", "message": "All caches cleared. Next request will fetch fresh live data."}
 
 
 @router.get("/api/data-freshness")
 def get_data_freshness():
-    from simulation import sim
+    from ml.simulation import sim
     now = time.time()
     entries = {}
     for key in sim._cache_ts:
@@ -72,7 +72,7 @@ async def get_state(city: str = Query(default="all"), fresh: bool = Query(defaul
 
 
 async def _build_state(city: str, fresh: bool):
-    from simulation import CITIES, DEFAULT_CITY, get_sources_for_city, sim
+    from ml.simulation import CITIES, DEFAULT_CITY, get_sources_for_city, sim
 
     cached = await _get_cached_state(city, fresh)
     if cached is not None:

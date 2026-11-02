@@ -8,16 +8,16 @@ from typing import Dict, Any
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import RedirectResponse
 
-from auth import require_roles
+from core.auth import require_roles
 from database import AlertSubscription, SessionLocal, User, UserRole
-from redis_client import rate_limit_or_429
+from core.redis_client import rate_limit_or_429
 from routes.cities import _city_wards
 from routes.websocket import broadcast_aqi_update
 from services.alert_service import send_aqi_alerts
 from services.email_service import _get_resend_key, _send_email
 from services.guidance_service import PROFILE_LABELS, _translate_text
-from simulation import CITIES, DEFAULT_CITY, sim
-from singletons import _schedule_background
+from ml.simulation import CITIES, DEFAULT_CITY, sim
+from core.singletons import _schedule_background
 
 router = APIRouter()
 
@@ -188,7 +188,7 @@ async def unsubscribe_advisory(request: Request, token: str):
 
 
 @router.get("/api/advisory/subscriptions/debug")
-async def debug_subscriptions(current_user: User = Depends(require_roles(UserRole.ADMIN.value))):
+async def debug_subscriptions(current_user: User = Depends(require_roles(UserRole.INSPECTOR.value))):
     """Diagnostic endpoint — returns all subscriptions, email config status, and current AQI."""
     db = SessionLocal()
     rows = db.query(AlertSubscription).filter(AlertSubscription.email.is_not(None)).all()

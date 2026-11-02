@@ -8,7 +8,7 @@ import json
 from collections import OrderedDict
 from typing import Dict, List, Any, Tuple, Optional
 
-from forecaster import get_http_client
+from ml.forecaster import get_http_client
 
 PROFILE_LABELS = {
     "asthma": "Asthma / Respiratory Condition",
